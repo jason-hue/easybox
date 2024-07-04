@@ -1,3 +1,6 @@
+use clap::Command;
+use uucore::error::UResult;
+
 pub mod mount_common;
 
 #[uucore::main]

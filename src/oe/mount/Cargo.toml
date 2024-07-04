@@ -1,7 +1,18 @@
 [package]
-name = "mount"
-version = "0.1.0"
+name = "oe_mount"
+version = "0.0.1"
 edition = "2021"
+authors = ["Zhenghang"]
+license = "MulanPSL-2.0"
+
+
+[lib]
+path = "src/mount.rs"
 
 [dependencies]
 clap = { version = "3.2.0", features = ["wrap_help", "cargo"] }
+uucore = { version=">=0.0.16", package="uucore", path="../../uucore"}
+
+[[bin]]
+name = "mount"
+path = "src/main.rs"

@@ -1,3 +1,1 @@
-fn main() {
-    println!("Hello, world!");
-}
+uucore::bin!(oe_mount);
