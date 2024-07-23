@@ -167,7 +167,7 @@ impl Config {
             version: options.is_present(options::VERSION),
             label: options.value_of_os(options::LABEL).map(OsString::from),
             uuid: options.value_of_os(options::UUID).map(OsString::from),
-            device: options.value_of_os(options::DEVICE).map(OsString::from),
+            device: options.value_of_os(options::DEVICE).or_else(||options.value_of_os(options::SOURCE)).map(OsString::from).map(OsString::from),
             bind: options.is_present(options::BIND),
             move_: options.is_present(options::MOVE),
             rbind: options.is_present(options::RBIND),
@@ -300,8 +300,4 @@ pub fn mount_app<'a>(about: &'a str, usage: &'a str) -> Command<'a> {
                 .required(false)
         )
         .trailing_var_arg(true)
-    
-    
-    
 }
-

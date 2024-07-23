@@ -59,7 +59,7 @@ members = [
   "src/oe/usleep",
   "src/oe/free",
   "src/oe/usleep",
-  "src/oe/setsid", "src/oe/mount", "src/oe/unmount",
+  "src/oe/setsid", "src/oe/mount"
 ]
 
 [dependencies]

@@ -11,8 +11,8 @@ path = "src/mount.rs"
 
 [dependencies]
 clap = { version = "3.2.0", features = ["wrap_help", "cargo"] }
-uucore = { version=">=0.0.16", package="uucore", path="../../uucore"}
-
+uucore = { version=">=0.0.16", features = ["mount"],package="uucore", path="../../uucore"}
+nix = { version = "0.25.1", optional = false, default-features = false, features = ["mount"] }
 [[bin]]
 name = "mount"
 path = "src/main.rs"

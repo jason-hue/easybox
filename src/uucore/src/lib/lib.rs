@@ -43,6 +43,8 @@ pub use crate::features::memo;
 pub use crate::features::pretty_float;
 #[cfg(feature = "ringbuffer")]
 pub use crate::features::ringbuffer;
+#[cfg(feature = "mount")]
+pub use crate::features::mount;
 
 // * (platform-specific) feature-gated modules
 // ** non-windows (i.e. Unix + Fuchsia)
