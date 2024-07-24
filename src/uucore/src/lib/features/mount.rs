@@ -1,26 +1,8 @@
-use std::ffi::{CStr, CString};
+use std::os::unix::fs::FileTypeExt;
 use std::path::Path;
-use nix::errno::Errno;
 use nix::mount::{mount, MsFlags};
-use nix::NixPath; 
-// type Result<T> = nix::Result<T>;
-// pub fn mount_fs(source: &str, target: &str, fstype: &str, flags: MsFlags, data: &str) -> Result<()> {
-//     let source = MountPath::new(source);
-//     let target = MountPath::new(target);
-//     let fstype = MountPath::new(fstype);
-//     let data = MountPath::new(data);
-//     match mount(Some(&source), &target,Some(&fstype),flags,Some(&data)) {
-//         Ok(()) => {
-//             println!("Mount successful!");
-//             Ok(())
-//         },
-//         Err(e) => {
-//             println!("Mount failed with error: {:?}", e);
-//             Err(e)
-//         }
-//     }
-// }
-
+use crate::error::{UResult, USimpleError};
+use nix::unistd::Uid;
 pub fn mount_fs<p: AsRef<Path>>(
     source: Option<&p>,
     target: &p,
@@ -30,31 +12,27 @@ pub fn mount_fs<p: AsRef<Path>>(
 ) -> nix::Result<()> {
     mount(source.map(|s| s.as_ref()), target.as_ref(), fs_type, flags, data)
 }
-
-// pub struct MountPath{
-//     path:  String
-// }
-// impl MountPath {
-//     fn new(path: &str) -> MountPath {
-//         MountPath {
-//             path: path.to_string(),
-//         }
-//     }
-// }
-// impl NixPath for MountPath{
-//     fn is_empty(&self) -> bool {
-//         self.path.is_empty()
-//     }
-// 
-//     fn len(&self) -> usize {
-//         self.path.len()
-//     }
-// 
-//     fn with_nix_path<T, F>(&self, f: F) -> nix::Result<T>
-//     where
-//         F: FnOnce(&CStr) -> T
-//     {
-//         let c_string = CString::new(self.path.clone()).map_err(|_| Errno::EINVAL)?;
-//         Ok(f(&c_string))
-//     }
-// }
+pub fn prepare_mount_source(source: &str)->UResult<String>{
+    if !Uid::effective().is_root() {
+        return Err(USimpleError::new(1, "需要 root 权限来挂载设备"));
+    }
+    let metadata = std::fs::metadata(source)
+        .map_err(|e| USimpleError::new(1, format!("无法获取源文件信息: {}", e)))?;
+    if metadata.file_type().is_block_device(){
+        //块设备直接返回
+        Ok(source.to_string())
+    }else {
+        //为普通文件创建循环设备
+        let output = std::process::Command::new("losetup")
+            .arg("-f").arg("--show").arg(source).output().map_err(|e| USimpleError::new(1, format!("创建循环设备失败: {}", e)))?;
+        if !output.status.success() {
+            Err(USimpleError::new(1, format!(
+                "创建循环设备失败: {}",
+                String::from_utf8_lossy(&output.stderr)).to_string()))
+        }else {
+            String::from_utf8(output.stdout)
+                .map_err(|e| USimpleError::new(1, format!("解析循环设备路径失败: {}", e)))
+                .map(|s| s.trim().to_string())
+        }
+    }
+}
