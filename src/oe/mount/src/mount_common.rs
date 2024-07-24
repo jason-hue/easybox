@@ -13,28 +13,28 @@ pub static BASE_CMD_PARSE_ERROR: i32 = 1;
 #[derive(Debug, Default)]
 pub struct Config {
     // 基本选项
-    pub all: bool,
-    pub no_canonicalize: bool,
-    pub fake: bool,
-    pub fork: bool,
-    pub fstab: Option<OsString>,
-    pub internal_only: bool,
-    pub show_labels: bool,
-    pub no_mtab: bool,
-    pub verbose: bool,
-    pub help: bool,
-    pub version: bool,
+    pub all: bool,// 挂载 /etc/fstab 文件中提到的所有文件系统
+    pub no_canonicalize: bool,//不对路径进行规范化处理
+    pub fake: bool,//模拟挂载,不实际执行 mount 系统调用
+    pub fork: bool,//为每个设备创建一个新进程(与 -a 一起使用)
+    pub fstab: Option<OsString>,//指定替代 /etc/fstab 的文件
+    pub internal_only: bool,//不调用 mount.<type> 辅助程序
+    pub show_labels: bool,//显示文件系统标签
+    pub no_mtab: bool,//不写入 /etc/mtab 文件
+    pub verbose: bool,//显示详细的操作信息
+    pub help: bool,//显示帮助信息
+    pub version: bool,//显示版本信息
 
     // 挂载选项
     pub options: MountOptions,
 
     // 源和目标
-    pub source: Option<Source>,
-    pub target: Option<OsString>,
-    pub target_prefix: Option<OsString>,
+    pub source: Option<Source>,//明确指定源(路径、标签、UUID)
+    pub target: Option<OsString>,//明确指定挂载点
+    pub target_prefix: Option<OsString>,//为所有挂载点指定路径前缀
 
     // 命名空间
-    pub namespace: Option<OsString>,
+    pub namespace: Option<OsString>,//在另一个命名空间中执行挂载
 
     // 操作
     pub operation: Operation,
@@ -42,38 +42,38 @@ pub struct Config {
 
 #[derive(Debug, Default)]
 pub struct MountOptions {
-    pub mode: Option<OsString>,
-    pub source: Option<OsString>,
-    pub source_force: bool,
-    pub options: Option<OsString>,
-    pub test_opts: Option<OsString>,
-    pub read_only: bool,
-    pub read_write: bool,
-    pub types: Option<OsString>,
+    pub mode: Option<OsString>,//指定如何处理从 fstab 加载的选项
+    pub source: Option<OsString>,//指定挂载选项的来源
+    pub source_force: bool,//强制使用来自 fstab/mtab 的选项
+    pub options: Option<OsString>,//指定以逗号分隔的挂载选项列表
+    pub test_opts: Option<OsString>,//限制文件系统集合(与 -a 选项一起使用)
+    pub read_only: bool,//以只读方式挂载文件系统
+    pub read_write: bool,//以读写方式挂载文件系统(默认)
+    pub types: Option<OsString>,//限制文件系统类型
 }
 
 #[derive(Debug)]
 pub enum Source {
-    Device(OsString),
-    Label(OsString),
-    UUID(OsString),
+    Device(OsString),//通过设备路径指定
+    Label(OsString),//通过文件系统标签指定设备
+    UUID(OsString),//通过文件系统 UUID 指定设备
 }
 
 #[derive(Debug, Default)]
 pub enum Operation {
     #[default]
     Normal,
-    Bind,
-    Move,
-    RBind,
-    MakeShared,
-    MakeSlave,
-    MakePrivate,
-    MakeUnbindable,
-    MakeRShared,
-    MakeRSlave,
-    MakeRPrivate,
-    MakeRUnbindable,
+    Bind,//将一个子树挂载到其他位置
+    Move,//将一个子树移动到其他位置
+    RBind,//挂载一个子树及其所有子挂载点到其他位置
+    MakeShared,//标记一个子树为共享
+    MakeSlave,//标记一个子树为从属
+    MakePrivate,//标记一个子树为私有
+    MakeUnbindable,//标记一个子树为不可绑定
+    MakeRShared,//递归地标记整个子树为共享
+    MakeRSlave,//递归地标记整个子树为从属
+    MakeRPrivate,//递归地标记整个子树为私有
+    MakeRUnbindable,//递归地标记整个子树为不可绑定
 }
 
 
@@ -206,7 +206,7 @@ impl Config {
             options.value_of_os(options::DEVICE)
                 .or_else(|| options.value_of_os(options::SOURCE))
                 .map(|device| Source::Device(device.to_owned()))
-        } 
+        }
     }
 
     fn parse_operation(options: &clap::ArgMatches) -> Operation {
