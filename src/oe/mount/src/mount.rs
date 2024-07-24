@@ -2,7 +2,7 @@ use clap::Command;
 use nix::mount::MsFlags;
 use uucore::error::{UResult, USimpleError};
 use uucore::{help_section, help_usage};
-use crate::mount_common::{Config, mount_app, parse_mount_cmd_args};
+use crate::mount_common::{Config, mount_app, parse_mount_cmd_args, Source};
 use uucore::mount::{mount_fs, prepare_mount_source};
 
 pub mod mount_common;
@@ -14,9 +14,8 @@ const USAGE: &str = help_usage!("mount.md");
 pub fn oemain(args: impl uucore::Args) -> UResult<()> {
     let config: Config = parse_mount_cmd_args(args,ABOUT,USAGE)?;
     println!("{:?}",config);
-    let source = config.device.ok_or_else(|| USimpleError::new(1, "源设备未指定"))?;
-    let source = source.to_str();
-    let mount_source = prepare_mount_source(source.unwrap())?;
+    let mut mount_source = config.get_device_path();
+    let mount_source = prepare_mount_source(mount_source.unwrap())?;
     let mount_source = Some(mount_source.as_str());
     let target = config.target.ok_or_else(|| USimpleError::new(1, "目标路径未指定"))?;
     let target = target.to_str().unwrap();
