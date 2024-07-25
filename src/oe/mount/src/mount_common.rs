@@ -229,6 +229,8 @@ impl Config {
             _ => None,
         }
     }
+
+
 }
 ///解析参数并填充Config结构体
 pub fn parse_mount_cmd_args(args: impl uucore::Args, about: &str, usage: &str) -> UResult<Config> {
@@ -267,7 +269,7 @@ pub fn mount_app<'a>(about: &'a str, usage: &'a str) -> Command<'a> {
         (options::HELP, Some('h'), "display this help"),
         (options::VERSION, Some('V'), "display version"),
     ] {
-        let arg = Arg::new(*name).long(*name).help(*help);
+        let arg = Arg::new(*name).long(*name).help(*help).global(true);
         cmd = cmd.arg(if let Some(s) = short { arg.short(*s) } else { arg });
     }
 
@@ -286,7 +288,7 @@ pub fn mount_app<'a>(about: &'a str, usage: &'a str) -> Command<'a> {
         (options::LABEL, Some('L'), "synonym for LABEL=<label>"),
         (options::UUID, Some('U'), "synonym for UUID=<uuid>"),
     ] {
-        let arg = Arg::new(*name).long(*name).help(*help);
+        let arg = Arg::new(*name).long(*name).help(*help).takes_value(true).allow_invalid_utf8(true);
         cmd = cmd.arg(if let Some(s) = short { arg.short(*s) } else { arg });
     }
 
@@ -324,4 +326,209 @@ pub fn mount_app<'a>(about: &'a str, usage: &'a str) -> Command<'a> {
             .required(false));
 
     cmd.trailing_var_arg(true)
+}
+pub struct ConfigHandler{
+    config: Config
+}
+impl ConfigHandler{
+    pub fn new(config: Config) -> ConfigHandler {
+        Self{
+            config,
+        }
+    }
+    pub fn process(&self) -> Result<(), Box<dyn std::error::Error>> {
+        self.handle_basic_options()?;
+        self.handle_mount_options()?;
+        self.handle_source_and_target()?;
+        self.handle_namespace()?;
+        self.handle_operation()?;
+        Ok(())
+    }
+    fn handle_basic_options(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if self.config.all {
+            self.mount_all_filesystems()?;
+        }
+        if self.config.no_canonicalize {
+            println!("Path canonicalization disabled");
+        }
+        if self.config.fake {
+            println!("Running in fake mode - no actual mounting will occur");
+        }
+        if self.config.fork {
+            println!("Forking enabled for each device");
+        }
+        if let Some(fstab) = &self.config.fstab {
+            self.use_alternative_fstab(fstab)?;
+        }
+        if self.config.internal_only {
+            println!("Using internal mount helpers only");
+        }
+        if self.config.show_labels {
+            println!("Filesystem labels will be displayed");
+        }
+        if self.config.no_mtab {
+            println!("/etc/mtab will not be updated");
+        }
+        if self.config.verbose {
+            println!("Verbose mode enabled");
+        }
+        Ok(())
+    }
+    fn handle_mount_options(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let options = &self.config.options;
+
+        if let Some(mode) = &options.mode {
+            println!("Options mode: {:?}", mode);
+        }
+        if let Some(source) = &options.source {
+            println!("Options source: {:?}", source);
+        }
+        if options.source_force {
+            println!("Forcing use of options from fstab/mtab");
+        }
+        if let Some(opts) = &options.options {
+            println!("Mount options: {:?}", opts);
+        }
+        if let Some(test_opts) = &options.test_opts {
+            println!("Test options: {:?}", test_opts);
+        }
+        if options.read_only {
+            println!("Mounting read-only");
+        }
+        if options.read_write {
+            println!("Mounting read-write");
+        }
+        if let Some(types) = &options.types {
+            println!("Filesystem types: {:?}", types);
+        }
+
+        Ok(())
+    }
+
+    fn handle_source_and_target(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(source) = &self.config.source {
+            match source {
+                Source::Device(device) => println!("Source device: {:?}", device),
+                Source::Label(label) => println!("Source label: {:?}", label),
+                Source::UUID(uuid) => println!("Source UUID: {:?}", uuid),
+            }
+        }
+
+        if let Some(target) = &self.config.target {
+            println!("Mount target: {:?}", target);
+        }
+
+        if let Some(prefix) = &self.config.target_prefix {
+            println!("Target prefix: {:?}", prefix);
+        }
+
+        Ok(())
+    }
+
+    fn handle_namespace(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(ns) = &self.config.namespace {
+            println!("Using namespace: {:?}", ns);
+        }
+        Ok(())
+    }
+
+    fn handle_operation(&self) -> Result<(), Box<dyn std::error::Error>> {
+        match &self.config.operation {
+            Operation::Normal => self.perform_normal_mount()?,
+            Operation::Bind => self.perform_bind_mount()?,
+            Operation::Move => self.perform_move_mount()?,
+            Operation::RBind => self.perform_rbind_mount()?,
+            Operation::MakeShared => self.make_mount_shared()?,
+            Operation::MakeSlave => self.make_mount_slave()?,
+            Operation::MakePrivate => self.make_mount_private()?,
+            Operation::MakeUnbindable => self.make_mount_unbindable()?,
+            Operation::MakeRShared => self.make_mount_rshared()?,
+            Operation::MakeRSlave => self.make_mount_rslave()?,
+            Operation::MakeRPrivate => self.make_mount_rprivate()?,
+            Operation::MakeRUnbindable => self.make_mount_runbindable()?,
+        }
+        Ok(())
+    }
+    // 辅助方法
+    fn mount_all_filesystems(&self) -> Result<(), Box<dyn std::error::Error>> {
+        println!("Mounting all filesystems from /etc/fstab");
+        // 实现挂载所有文件系统的逻辑
+        Ok(())
+    }
+    fn use_alternative_fstab(&self, fstab: &OsString) -> Result<(), Box<dyn std::error::Error>> {
+        println!("Using alternative fstab: {:?}", fstab);
+        // 实现使用替代 fstab 文件的逻辑
+        Ok(())
+    }
+    fn perform_normal_mount(&self) -> Result<(), Box<dyn std::error::Error>> {
+        println!("Performing normal mount");
+        // 实现正常挂载的逻辑
+        Ok(())
+    }
+
+    fn perform_bind_mount(&self) -> Result<(), Box<dyn std::error::Error>> {
+        println!("Performing bind mount");
+        // 实现绑定挂载的逻辑
+        Ok(())
+    }
+
+    fn perform_move_mount(&self) -> Result<(), Box<dyn std::error::Error>> {
+        println!("Performing move mount");
+        // 实现移动挂载的逻辑
+        Ok(())
+    }
+
+    fn perform_rbind_mount(&self) -> Result<(), Box<dyn std::error::Error>> {
+        println!("Performing rbind mount");
+        // 实现递归绑定挂载的逻辑
+        Ok(())
+    }
+
+    fn make_mount_shared(&self) -> Result<(), Box<dyn std::error::Error>> {
+        println!("Making mount shared");
+        // 实现设置共享挂载的逻辑
+        Ok(())
+    }
+
+    fn make_mount_slave(&self) -> Result<(), Box<dyn std::error::Error>> {
+        println!("Making mount slave");
+        // 实现设置从属挂载的逻辑
+        Ok(())
+    }
+
+    fn make_mount_private(&self) -> Result<(), Box<dyn std::error::Error>> {
+        println!("Making mount private");
+        // 实现设置私有挂载的逻辑
+        Ok(())
+    }
+
+    fn make_mount_unbindable(&self) -> Result<(), Box<dyn std::error::Error>> {
+        println!("Making mount unbindable");
+        // 实现设置不可绑定挂载的逻辑
+        Ok(())
+    }
+
+    fn make_mount_rshared(&self) -> Result<(), Box<dyn std::error::Error>> {
+        println!("Making mount recursively shared");
+        // 实现设置递归共享挂载的逻辑
+        Ok(())
+    }
+
+    fn make_mount_rslave(&self) -> Result<(), Box<dyn std::error::Error>> {
+        println!("Making mount recursively slave");
+        // 实现设置递归从属挂载的逻辑
+        Ok(())
+    }
+
+    fn make_mount_rprivate(&self) -> Result<(), Box<dyn std::error::Error>> {
+        println!("Making mount recursively private");
+        // 实现设置递归私有挂载的逻辑
+        Ok(())
+    }
+
+    fn make_mount_runbindable(&self) -> Result<(), Box<dyn std::error::Error>> {
+        println!("Making mount recursively unbindable");
+        // 实现设置递归不可绑定挂载的逻辑
+        Ok(())
+    }
 }
