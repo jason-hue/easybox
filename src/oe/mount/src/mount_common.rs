@@ -1,11 +1,13 @@
 use std::any::Any;
 use std::ffi::OsString;
-use std::io::{Read, Stdin};
+use std::fs::File;
+use std::io::{BufRead, BufReader, Read};
 use clap::{crate_version, Arg, Command, ArgGroup};
-use clap::error::ContextValue::String;
-use uucore::error::UResult;
+use nix::mount::MsFlags;
+use regex::Regex;
+use uucore::error::{UResult, USimpleError};
 use uucore::format_usage;
-use crate::mount_common::options::OPTIONS_SOURCE;
+use uucore::mount::{mount_fs, prepare_mount_source};
 
 pub static BASE_CMD_PARSE_ERROR: i32 = 1;
 
@@ -452,7 +454,26 @@ impl ConfigHandler{
     // 辅助方法
     fn mount_all_filesystems(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("Mounting all filesystems from /etc/fstab");
+        let fstab_file = parse_fstab();
         // 实现挂载所有文件系统的逻辑
+        for line_vec in fstab_file{
+            let mut source = &line_vec[0];
+            let mount_source = Some(prepare_mount_source(source.as_str()).unwrap());
+            let mut target = &line_vec[1];
+            let fstype = line_vec[2].as_str().clone();
+            let flags = MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID;
+            let data = None;
+            if is_already_mounted(target).unwrap(){
+                println!("文件系统路径：{}已经挂载过了！跳过！", target);
+                continue
+            }
+            if is_swapfile(fstype){
+                println!("跳过挂载交换文件!: {}，请用swapon挂载交换文件！",source);
+                continue
+            }
+            mount_fs(mount_source.as_ref(), &target, Some(fstype), flags, data).expect("Mount failed!");
+            println!("Mount successful!");
+        }
         Ok(())
     }
     fn use_alternative_fstab(&self, fstab: &OsString) -> Result<(), Box<dyn std::error::Error>> {
@@ -531,4 +552,65 @@ impl ConfigHandler{
         // 实现设置递归不可绑定挂载的逻辑
         Ok(())
     }
+}
+pub fn parse_fstab() -> Vec<Vec<String>> {
+    let file = File::open("/etc/fstab").expect("打开fstab失败!");
+    let reader = BufReader::new(file);
+    let re = Regex::new(r"^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)\s+(\d+)").unwrap();
+    //(\S)等效于[^\s]匹配非空白符字符
+    let mut fstab_vec = Vec::new();
+
+    for line in reader.lines() {
+        let line = line.unwrap();
+        if line.trim().starts_with('#') || line.trim().is_empty() {
+            continue;  // 跳过注释行和空行
+        }
+        if let Some(caps) = re.captures(&line) {
+            let line_vec: Vec<String> = (1..=6).map(|i| caps[i].to_string()).collect();
+            fstab_vec.push(line_vec);
+
+            println!("文件系统: {}", &caps[1]);
+            println!("挂载点: {}", &caps[2]);
+            println!("类型: {}", &caps[3]);
+            println!("选项: {}", &caps[4]);
+            println!("dump: {}", &caps[5]);
+            println!("pass: {}", &caps[6]);
+            println!("---");
+        }
+    }
+    println!("fstab文件内容：{:?}", fstab_vec);
+    fstab_vec
+}
+
+fn is_already_mounted(target: &str) -> Result<bool, Box<dyn std::error::Error>> {
+    /*读取/proc/mounts来获取已挂载的设备挂载点，判断是否已挂载*/
+    let file = File::open("/proc/mounts")?;
+    let reader = BufReader::new(file);
+    let re = Regex::new(r"^\S+\s+(\S+)")?;
+    for line in reader.lines() {
+        let line = line?;
+        if let Some(caps) = re.captures(&line) {
+            if let Some(mount_point) = caps.get(1) {
+                if target == mount_point.as_str() {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+    Ok(false)
+}
+fn is_swapfile(fstype: &str) -> bool {
+    fstype == "swap"
+}
+fn parse_mount_options(options: &str) -> MsFlags {
+    let mut flags = MsFlags::empty();
+    // for option in options.split(',') {
+    //     // match option {
+    //     //     "noexec" => flags |= MsFlags::MS_NOEXEC,
+    //     //     "nosuid" => flags |= MsFlags::MS_NOSUID,
+    //     //     // 添加其他选项...
+    //     //     _ => {}
+    //     // }
+    // }
+    flags
 }
