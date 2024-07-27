@@ -1,13 +1,12 @@
 use std::any::Any;
 use std::ffi::OsString;
-use std::fs::File;
-use std::io::{BufRead, BufReader, Read};
+use std::fs;
+use std::io::{BufRead, Read};
 use clap::{crate_version, Arg, Command, ArgGroup};
 use nix::mount::MsFlags;
-use regex::Regex;
 use uucore::error::{UResult, USimpleError};
 use uucore::format_usage;
-use uucore::mount::{mount_fs, prepare_mount_source};
+use uucore::mount::{ is_already_mounted, is_swapfile, mount_fs, parse_fstab, prepare_mount_source};
 
 pub static BASE_CMD_PARSE_ERROR: i32 = 1;
 
@@ -163,6 +162,44 @@ pub mod options{
 
 impl Config {
     pub fn from(options: &clap::ArgMatches) -> UResult<Self> {
+        //路径规范化
+        let (canonicalized_source,canonicalized_target) = if !options.is_present(options::NO_CANONICALIZE){
+            let mut source = Self::parse_source(options);
+            let target = options.value_of_os(options::TARGET)
+                .or_else(|| options.value_of_os("target_positional"))
+                .map(OsString::from);
+            (
+                source.and_then(|s| match s{
+                    Source::Device(dev) => match fs::canonicalize(&dev){
+                        Ok(path) => {
+                            Some(Source::Device(path.into_os_string()))
+                        }
+                        Err(e) => {
+                            eprintln!("警告：无法规范化设备路径 {:?}: {}", dev, e);
+                            Some(Source::Device(dev))
+                        }
+                    },
+                    Source::Label(label) => Some(Source::Label(label)),
+                    Source::UUID(uuid) => Some(Source::UUID(uuid))
+                }),
+                target.and_then(|t|  {
+                    match fs::canonicalize(&t){
+                        Ok(path) => Some(path.into_os_string()),
+                        Err(e) => {
+                            eprintln!("警告：无法规范化设备路径 {:?}: {}", t, e);
+                            Some(t)
+                        }
+                    }
+                })
+            )
+
+
+        }else {
+            (Self::parse_source(options),options.value_of_os(options::TARGET)
+                .or_else(|| options.value_of_os("target_positional"))
+                .map(OsString::from))
+        };
+
         Ok(Self {
             all: options.is_present(options::ALL),
             no_canonicalize: options.is_present(options::NO_CANONICALIZE),
@@ -187,10 +224,8 @@ impl Config {
                 types: options.value_of_os(options::TYPES).map(OsString::from),
             },
 
-            source: Self::parse_source(options),
-            target: options.value_of_os(options::TARGET)
-                .or_else(|| options.value_of_os("target_positional"))
-                .map(OsString::from),
+            source: canonicalized_source,
+            target: canonicalized_target,
             target_prefix: options.value_of_os(options::TARGET_PREFIX).map(OsString::from),
 
             namespace: options.value_of_os(options::NAMESPACE).map(OsString::from),
@@ -225,12 +260,12 @@ impl Config {
         else if options.is_present(options::MAKE_RUNBINDABLE) { Operation::MakeRUnbindable }
         else { Operation::Normal }
     }
-    pub fn get_device_path(&self) -> Option<&str> {
-        match &self.source {
-            Some(Source::Device(device)) => Some(device.to_str().unwrap()),
-            _ => None,
-        }
-    }
+    // pub fn get_device_path(&self) -> Option<&str> {
+    //     match &self.source {
+    //         Some(Source::Device(device)) => Some(device.to_str().unwrap()),
+    //         _ => None,
+    //     }
+    // }
 
 
 }
@@ -352,6 +387,7 @@ impl ConfigHandler{
         }
         if self.config.no_canonicalize {
             println!("Path canonicalization disabled");
+
         }
         if self.config.fake {
             println!("Running in fake mode - no actual mounting will occur");
@@ -552,65 +588,4 @@ impl ConfigHandler{
         // 实现设置递归不可绑定挂载的逻辑
         Ok(())
     }
-}
-pub fn parse_fstab() -> Vec<Vec<String>> {
-    let file = File::open("/etc/fstab").expect("打开fstab失败!");
-    let reader = BufReader::new(file);
-    let re = Regex::new(r"^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)\s+(\d+)").unwrap();
-    //(\S)等效于[^\s]匹配非空白符字符
-    let mut fstab_vec = Vec::new();
-
-    for line in reader.lines() {
-        let line = line.unwrap();
-        if line.trim().starts_with('#') || line.trim().is_empty() {
-            continue;  // 跳过注释行和空行
-        }
-        if let Some(caps) = re.captures(&line) {
-            let line_vec: Vec<String> = (1..=6).map(|i| caps[i].to_string()).collect();
-            fstab_vec.push(line_vec);
-
-            println!("文件系统: {}", &caps[1]);
-            println!("挂载点: {}", &caps[2]);
-            println!("类型: {}", &caps[3]);
-            println!("选项: {}", &caps[4]);
-            println!("dump: {}", &caps[5]);
-            println!("pass: {}", &caps[6]);
-            println!("---");
-        }
-    }
-    println!("fstab文件内容：{:?}", fstab_vec);
-    fstab_vec
-}
-
-fn is_already_mounted(target: &str) -> Result<bool, Box<dyn std::error::Error>> {
-    /*读取/proc/mounts来获取已挂载的设备挂载点，判断是否已挂载*/
-    let file = File::open("/proc/mounts")?;
-    let reader = BufReader::new(file);
-    let re = Regex::new(r"^\S+\s+(\S+)")?;
-    for line in reader.lines() {
-        let line = line?;
-        if let Some(caps) = re.captures(&line) {
-            if let Some(mount_point) = caps.get(1) {
-                if target == mount_point.as_str() {
-                    return Ok(true);
-                }
-            }
-        }
-    }
-    Ok(false)
-}
-fn is_swapfile(fstype: &str) -> bool {
-    fstype == "swap"
-}
-fn parse_mount_options(options: &str) -> MsFlags {
-    let mut flags = MsFlags::empty();
-    // for option in options.split(',') {
-    //     // match option {
-    //     //     "noexec" => flags |= MsFlags::MS_NOEXEC,
-    //     //     "nosuid" => flags |= MsFlags::MS_NOSUID,
-    //     //     // 添加其他选项...
-    //     //     _ => {}
-    //     // }
-    // }
-    flags
 }
