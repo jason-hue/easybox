@@ -1,8 +1,10 @@
 use std::fs::{canonicalize, File};
+use std::{fs, io};
 use std::io::{BufRead, BufReader};
 use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
 use nix::mount::{mount, MsFlags};
+use nix::NixPath;
 use crate::error::{UResult, USimpleError};
 use nix::unistd::Uid;
 use regex::Regex;
@@ -99,4 +101,32 @@ pub fn parse_fstab() -> Vec<Vec<String>> {
     }
     println!("fstab文件内容：{:?}", fstab_vec);
     fstab_vec
+}
+pub fn find_device_by_label(label: &str) -> Result<String, Box<dyn std::error::Error>>{
+    let output = std::process::Command::new("blkid")
+        .arg("-L")
+        .arg(label)
+        .output()?;
+
+    if output.status.success() {
+        let device = String::from_utf8(output.stdout)?.trim().to_string();
+        Ok(device)
+    } else {
+        Err(io::Error::new(io::ErrorKind::NotFound, "Not found device by label").into())
+    }
+}
+pub fn find_device_by_uuid(uuid: &str) -> Result<String,Box<dyn std::error::Error>>{
+    let output = std::process::Command::new("blkid")
+        .arg("-U")
+        .arg(uuid)
+        .output()?;
+
+    if output.status.success() {
+        let device = String::from_utf8(output.stdout)?.trim().to_string();
+        println!("uuid 解析成功！");
+        Ok(device)
+    }else {
+        Err(io::Error::new(io::ErrorKind::NotFound, "Not found device by uuid").into())
+    }
+
 }

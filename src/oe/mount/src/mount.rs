@@ -15,7 +15,7 @@ pub fn oemain(args: impl uucore::Args) -> UResult<()> {
     let config: Config = parse_mount_cmd_args(args,ABOUT,USAGE)?;
     println!("{:#?}",config);
     let config_handler = ConfigHandler::new(config);
-    config_handler.process();
+    let _ = config_handler.process();
     // let mut mount_source = config.get_device_path();
     // let mount_source = prepare_mount_source(mount_source.unwrap())?;
     // let mount_source = Some(mount_source.as_str());

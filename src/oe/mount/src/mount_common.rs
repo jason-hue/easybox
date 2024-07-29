@@ -1,12 +1,12 @@
 use std::any::Any;
 use std::ffi::OsString;
-use std::fs;
+use std::{fs, io};
 use std::io::{BufRead, Read};
 use clap::{crate_version, Arg, Command, ArgGroup};
 use nix::mount::MsFlags;
 use uucore::error::{UResult, USimpleError};
 use uucore::format_usage;
-use uucore::mount::{ is_already_mounted, is_swapfile, mount_fs, parse_fstab, prepare_mount_source};
+use uucore::mount::{find_device_by_label, find_device_by_uuid, is_already_mounted, is_swapfile, mount_fs, parse_fstab, prepare_mount_source};
 
 pub static BASE_CMD_PARSE_ERROR: i32 = 1;
 
@@ -287,8 +287,8 @@ pub fn mount_app<'a>(about: &'a str, usage: &'a str) -> Command<'a> {
         .infer_long_args(true);
 
     // 添加位置参数
-    cmd = cmd.arg(Arg::new("target_positional").takes_value(true).help("指明挂载点").index(2).allow_invalid_utf8(true))
-        .arg(Arg::new(options::DEVICE).takes_value(true).help("按路径指定设备").index(1).allow_invalid_utf8(true));
+    cmd = cmd.arg(Arg::new(options::DEVICE).takes_value(true).help("按路径指定设备").index(1).allow_invalid_utf8(true))
+        .arg(Arg::new("target_positional").takes_value(true).help("指明挂载点").index(2).allow_invalid_utf8(true));
 
     // 添加布尔标志
     for (name, short, help) in &[
@@ -360,6 +360,9 @@ pub fn mount_app<'a>(about: &'a str, usage: &'a str) -> Command<'a> {
             .required(false))
         .group(ArgGroup::new("options_source")
             .args(&[options::OPTIONS_SOURCE, options::OPTIONS_SOURCE_FORCE])
+            .required(false))
+        .group(ArgGroup::new("target_options")
+            .args(&[options::TARGET,"target_positional"])
             .required(false));
 
     cmd.trailing_var_arg(true)
@@ -520,7 +523,95 @@ impl ConfigHandler{
     fn perform_normal_mount(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("Performing normal mount");
         // 实现正常挂载的逻辑
+        let mount_source = match &self.config.source {
+            Some(Source::Device(dev)) => dev.to_str()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid device path"))?.to_string(),
+
+            Some(Source::Label(label)) => {
+                let label_str = label.to_str()
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid label"))?;
+                let dev = find_device_by_label(label_str)?;
+                dev
+            },
+
+            Some(Source::UUID(uuid)) => {
+                let uuid_str = uuid.to_str()
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid UUID"))?;
+                let dev = find_device_by_uuid(uuid_str)?;
+                dev
+            },
+
+            None => return Err(Box::new(io::Error::new(io::ErrorKind::InvalidInput, "No source specified"))),
+        };
+        let target = &self.config.target.as_ref().ok_or_else(||io::Error::new(io::ErrorKind::InvalidInput,"No target specified!"))?
+            .to_str().ok_or_else(||io::Error::new(io::ErrorKind::InvalidData,"Invalid target path!")).unwrap();
+        let (flags,options) = self.parse_options()?;
+        let source = prepare_mount_source(&mount_source).unwrap();
+        let fstype = if let Some(t) = self.config.options.types.as_ref()
+            .and_then(|t|t.to_str()){
+            Some(t.to_string())
+        }else {
+            let output = std::process::Command::new("blkid")
+                .arg("-o")
+                .arg("value")
+                .arg("-s")
+                .arg("TYPE")
+                .arg(&mount_source)
+                .output()?;
+            let fs_type = String::from_utf8(output.stdout)?.trim().to_string();
+            if fs_type.is_empty() {
+                None
+            } else {
+                Some(fs_type)
+            }
+        };
+        let data = None;
+        if !is_already_mounted(*target).unwrap(){
+            mount_fs(Some(&source),&target.to_string(), Some(fstype.clone().unwrap().as_str()), flags, data).map_err(|e| {
+                eprintln!("挂载失败: {:?}", e);
+                eprintln!("源: {:?}, 目标: {}, 文件系统类型: {:?}, 标志: {:?}, 选项: {:?}",
+                          source, target, fstype, flags, options);
+                e
+            })?;
+        }else {
+            println!("已经挂载过！");
+        }
         Ok(())
+    }
+
+    fn parse_options(&self) -> Result<(MsFlags, Option<String>), Box<dyn std::error::Error>> {
+        let mut flags = MsFlags::empty();
+        let mut data = Vec::new();
+
+        if self.config.options.read_only {
+            flags |= MsFlags::MS_RDONLY;
+        }
+
+        if let Some(options) = &self.config.options.options {
+            for option in options.to_str().ok_or("Invalid UTF-8 in options")?.split(',') {
+                match option {
+                    "noexec" => flags |= MsFlags::MS_NOEXEC,
+                    "nosuid" => flags |= MsFlags::MS_NOSUID,
+                    "nodev" => flags |= MsFlags::MS_NODEV,
+                    "sync" => flags |= MsFlags::MS_SYNCHRONOUS,
+                    "dirsync" => flags |= MsFlags::MS_DIRSYNC,
+                    "noatime" => flags |= MsFlags::MS_NOATIME,
+                    "nodiratime" => flags |= MsFlags::MS_NODIRATIME,
+                    "relatime" => flags |= MsFlags::MS_RELATIME,
+                    "strictatime" => flags |= MsFlags::MS_STRICTATIME,
+                    "lazytime" => flags |= MsFlags::MS_LAZYTIME,
+                    _ => data.push(option.to_string()),
+                }
+            }
+        }
+
+        let data_string = if data.is_empty() {
+            None
+        } else {
+            Some(data.join(","))
+        };
+
+        Ok((flags, data_string))
     }
 
     fn perform_bind_mount(&self) -> Result<(), Box<dyn std::error::Error>> {
