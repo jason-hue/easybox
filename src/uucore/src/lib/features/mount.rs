@@ -3,20 +3,78 @@ use std::{fs, io};
 use std::io::{BufRead, BufReader};
 use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
+use nix::errno::Errno;
 use nix::mount::{mount, MsFlags};
 use nix::NixPath;
 use crate::error::{UResult, USimpleError};
 use nix::unistd::Uid;
 use regex::Regex;
-
 pub fn mount_fs<p: AsRef<Path>>(
     source: Option<&p>,
     target: &p,
     fs_type:Option<&str>,
     flags: MsFlags,
+    data: Option<&str>,
+    internal_only: bool
+) -> nix::Result<()> {
+    let result =  mount(source.map(|s| s.as_ref()), target.as_ref(), fs_type, flags, data);
+    if internal_only{
+        // 如果指定了 internal_only，我们只返回内核挂载的结果
+        result
+    }else {
+        match result {
+            Ok(_) => Ok(()), // 内部挂载成功
+            Err(e) => {
+                eprintln!("Internal mount failed: {}. Attempting external mount...", e);
+                // 尝试外部挂载
+                external_mount(source, target, fs_type, flags, data)
+            }
+        }
+    }
+}
+fn external_mount<P: AsRef<Path>>(
+    source: Option<&P>,
+    target: &P,
+    fs_type: Option<&str>,
+    flags: MsFlags,
     data: Option<&str>
 ) -> nix::Result<()> {
-    mount(source.map(|s| s.as_ref()), target.as_ref(), fs_type, flags, data)
+    let mut cmd = std::process::Command::new("mount");
+
+    if let Some(src) = source {
+        cmd.arg(src.as_ref());
+    }
+
+    cmd.arg(target.as_ref());
+
+    if let Some(fs) = fs_type {
+        cmd.args(&["-t", fs]);
+    }
+
+    // 将 flags 转换为命令行选项
+    if flags.contains(MsFlags::MS_RDONLY) {
+        cmd.arg("-r");
+    }
+    if flags.contains(MsFlags::MS_NOSUID) {
+        cmd.arg("-o").arg("nosuid");
+    }
+    if flags.contains(MsFlags::MS_NODEV) {
+        cmd.arg("-o").arg("nodev");
+    }
+    if flags.contains(MsFlags::MS_NOEXEC) {
+        cmd.arg("-o").arg("noexec");
+    }
+    // 可以根据需要添加更多的 flags 转换
+
+    if let Some(d) = data {
+        cmd.arg("-o").arg(d);
+    }
+
+    match cmd.status() {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(Errno::from_i32(status.code().unwrap_or(1))),
+        Err(e) => Err(Errno::from_i32(e.raw_os_error().unwrap_or(1)))
+    }
 }
 pub fn prepare_mount_source(source: &str)->UResult<String>{
     if !Uid::effective().is_root() {
@@ -74,33 +132,43 @@ pub fn parse_mount_options(options: &str) -> MsFlags {
     // }
     flags
 }
-pub fn parse_fstab() -> Vec<Vec<String>> {
-    let file = File::open("/etc/fstab").expect("打开fstab失败!");
+pub fn parse_fstab(path: &str) -> Result<Vec<Vec<String>>, Box<dyn std::error::Error>> {
+    let path = Path::new(path);
+    if path.is_dir() {
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{:?} 是一个目录,而不是文件", path)
+        )));
+    }
+
+    let file = File::open(path).map_err(|e| format!("打开 fstab 文件失败: {}", e))?;
     let reader = BufReader::new(file);
     let re = Regex::new(r"^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)\s+(\d+)").unwrap();
-    //(\S)等效于[^\s]匹配非空白符字符
+
     let mut fstab_vec = Vec::new();
 
-    for line in reader.lines() {
-        let line = line.unwrap();
-        if line.trim().starts_with('#') || line.trim().is_empty() {
-            continue;  // 跳过注释行和空行
+    for (index, line) in reader.lines().enumerate() {
+        let line = line.map_err(|e| format!("读取第 {} 行时出错: {}", index + 1, e))?;
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            continue;  // 跳过注释和空行
         }
-        if let Some(caps) = re.captures(&line) {
+        if let Some(caps) = re.captures(trimmed) {
             let line_vec: Vec<String> = (1..=6).map(|i| caps[i].to_string()).collect();
             fstab_vec.push(line_vec);
-
-            println!("文件系统: {}", &caps[1]);
-            println!("挂载点: {}", &caps[2]);
-            println!("类型: {}", &caps[3]);
-            println!("选项: {}", &caps[4]);
-            println!("dump: {}", &caps[5]);
-            println!("pass: {}", &caps[6]);
-            println!("---");
+        } else {
+            eprintln!("警告: 第 {} 行不符合预期格式: {}", index + 1, trimmed);
         }
     }
-    println!("fstab文件内容：{:?}", fstab_vec);
-    fstab_vec
+
+    if fstab_vec.is_empty() {
+        Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "fstab 文件中没有找到有效条目"
+        )))
+    } else {
+        Ok(fstab_vec)
+    }
 }
 pub fn find_device_by_label(label: &str) -> Result<String, Box<dyn std::error::Error>>{
     let output = std::process::Command::new("blkid")

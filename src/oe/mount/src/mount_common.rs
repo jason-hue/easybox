@@ -2,8 +2,11 @@ use std::any::Any;
 use std::ffi::OsString;
 use std::{fs, io};
 use std::io::{BufRead, Read};
+use std::path::Path;
+use std::process::exit;
 use clap::{crate_version, Arg, Command, ArgGroup};
 use nix::mount::MsFlags;
+use nix::unistd::{fork,ForkResult};
 use uucore::error::{UResult, USimpleError};
 use uucore::format_usage;
 use uucore::mount::{find_device_by_label, find_device_by_uuid, is_already_mounted, is_swapfile, mount_fs, parse_fstab, prepare_mount_source};
@@ -377,7 +380,10 @@ impl ConfigHandler{
         }
     }
     pub fn process(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.handle_basic_options()?;
+        if let Err(e) = self.handle_basic_options() {
+            eprintln!("Error handling basic options: {}", e);
+            return Err(e);
+        }
         self.handle_mount_options()?;
         self.handle_source_and_target()?;
         self.handle_namespace()?;
@@ -493,7 +499,8 @@ impl ConfigHandler{
     // 辅助方法
     fn mount_all_filesystems(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("Mounting all filesystems from /etc/fstab");
-        let fstab_file = parse_fstab();
+        let fstab_path = "/etc/fstab";
+        let fstab_file = parse_fstab(fstab_path).unwrap();
         // 实现挂载所有文件系统的逻辑
         for line_vec in fstab_file{
             let mut source = &line_vec[0];
@@ -501,24 +508,108 @@ impl ConfigHandler{
             let mut target = &line_vec[1];
             let fstype = line_vec[2].as_str().clone();
             let flags = MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID;
-            let data = None;
-            if is_already_mounted(target).unwrap(){
-                println!("文件系统路径：{}已经挂载过了！跳过！", target);
-                continue
+            // if is_already_mounted(target).unwrap(){
+            //     println!("文件系统路径：{}已经挂载过了！跳过！", target);
+            //     continue
+            // }
+            // if is_swapfile(fstype){
+            //     println!("跳过挂载交换文件!: {}，请用swapon挂载交换文件！",source);
+            //     continue
+            // }
+            // mount_fs(mount_source.as_ref(), &target, Some(fstype), flags, data).expect("Mount failed!");
+            // println!("Mount successful!");
+            if self.should_fork(){
+                match unsafe{fork()} {
+                    Ok(ForkResult::Parent {child}) => {
+                        // 父进程
+                        println!("Forked child with PID: {}", child);
+                    },
+                    Ok(ForkResult::Child) => {
+                        // 子进程
+                        if let Err(e) = self.mount_single_filesystem(source, target, fstype) {
+                            eprintln!("Failed to mount {}: {}", source, e);
+                            exit(1);
+                        }
+                        exit(0);
+                    },
+                    Err(e) => return Err(Box::new(e)),
+                }
+            }else {
+                if let Err(e) = self.mount_single_filesystem(source, target, fstype) {
+                    eprintln!("Failed to mount {}: {}", source, e);
+                }
             }
-            if is_swapfile(fstype){
-                println!("跳过挂载交换文件!: {}，请用swapon挂载交换文件！",source);
-                continue
+        }
+        if self.should_fork() {
+            // 等待所有子进程完成
+            use nix::sys::wait::{waitpid, WaitStatus};
+            use nix::unistd::Pid;
+
+            loop {
+                match waitpid(Pid::from_raw(-1), None) {
+                    Ok(WaitStatus::Exited(_, _)) => {},
+                    Ok(WaitStatus::Signaled(_, _, _)) => {},
+                    Ok(_) => continue,
+                    Err(nix::errno::Errno::ECHILD) => break,
+                    Err(e) => return Err(Box::new(e)),
+                }
             }
-            mount_fs(mount_source.as_ref(), &target, Some(fstype), flags, data).expect("Mount failed!");
-            println!("Mount successful!");
         }
         Ok(())
     }
-    fn use_alternative_fstab(&self, fstab: &OsString) -> Result<(), Box<dyn std::error::Error>> {
-        println!("Using alternative fstab: {:?}", fstab);
-        // 实现使用替代 fstab 文件的逻辑
+    fn mount_single_filesystem(&self, source: &str, target: &str, fstype: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let mount_source = Some(prepare_mount_source(source).unwrap());
+        let flags = MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID;
+        let data = None;
+        let interal_only = self.use_internal_only();
+        if is_already_mounted(target).unwrap() {
+            println!("文件系统路径：{}已经挂载过了！跳过！", target);
+            return Ok(());
+        }
+        if is_swapfile(fstype) {
+            println!("跳过挂载交换文件!: {}，请用swapon挂载交换文件！", source);
+            return Ok(());
+        }
+
+        if self.is_fake_mode() {
+            println!("FAKE: Would mount {} on {} with type {}", source, target, fstype);
+        } else {
+            mount_fs(mount_source.as_ref(), &target.to_string(), Some(fstype), flags, data,interal_only)?;
+            println!("Mount successful: {} on {}", source, target);
+        }
+
         Ok(())
+    }
+    fn use_alternative_fstab(&self, fstab: &OsString) -> Result<(), Box<dyn std::error::Error>> {
+        println!("使用替代 fstab: {:?}", fstab);
+        let fstab_path = fstab.to_str().ok_or_else(|| std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "无效的 fstab 路径".to_string()
+        ))?;
+        let path = Path::new(fstab_path);
+        if path.is_dir() {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("{:?} 是一个目录。请指定一个文件。", path)
+            )));
+        }
+
+        // 读取并解析替代的 fstab 文件
+        match parse_fstab(fstab_path) {
+            Ok(fstab_entries) => {
+                for entry in fstab_entries {
+                    // 对每个 fstab 条目执行挂载操作
+                    let source = &entry[0];
+                    let mount_source = prepare_mount_source(source)
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+                    let target = &entry[1];
+                    let fstype = &entry[2];
+                    self.mount_single_filesystem(&mount_source, target, fstype)?;
+                }
+                Ok(())
+            },
+            Err(e) => Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))
+        }
     }
     fn perform_normal_mount(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("Performing normal mount");
@@ -546,7 +637,6 @@ impl ConfigHandler{
         let target = &self.config.target.as_ref().ok_or_else(||io::Error::new(io::ErrorKind::InvalidInput,"No target specified!"))?
             .to_str().ok_or_else(||io::Error::new(io::ErrorKind::InvalidData,"Invalid target path!")).unwrap();
         let (flags,options) = self.parse_options()?;
-        let source = prepare_mount_source(&mount_source).unwrap();
         let fstype = if let Some(t) = self.config.options.types.as_ref()
             .and_then(|t|t.to_str()){
             Some(t.to_string())
@@ -566,19 +656,37 @@ impl ConfigHandler{
             }
         };
         let data = None;
-        if !is_already_mounted(*target).unwrap(){
-            mount_fs(Some(&source),&target.to_string(), Some(fstype.clone().unwrap().as_str()), flags, data).map_err(|e| {
-                eprintln!("挂载失败: {:?}", e);
-                eprintln!("源: {:?}, 目标: {}, 文件系统类型: {:?}, 标志: {:?}, 选项: {:?}",
-                          source, target, fstype, flags, options);
-                e
-            })?;
-        }else {
-            println!("已经挂载过！");
+        let interal_only = self.use_internal_only();
+        if self.is_fake_mode() {
+            println!("FAKE: Would mount {} on {} with type {:?}, flags {:?}, and options {:?}",
+                     mount_source, target, fstype.unwrap(), flags, options);
+        } else {
+            if !is_already_mounted(*target).unwrap() {
+                let source = prepare_mount_source(&mount_source).unwrap();
+                mount_fs(Some(&source), &target.to_string(), Some(fstype.clone().unwrap().as_str()), flags, data,interal_only).map_err(|e| {
+                    eprintln!("挂载失败: {:?}", e);
+                    eprintln!("源: {:?}, 目标: {}, 文件系统类型: {:?}, 标志: {:?}, 选项: {:?}",
+                              source, target, fstype, flags, options);
+                    e
+                })?;
+            } else {
+                println!("已经挂载过！");
+            }
         }
         Ok(())
     }
-
+    fn convert_uresult<T>(result: UResult<T>) -> Result<T, Box<dyn std::error::Error>> {
+        result.map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())) as Box<dyn std::error::Error>)
+    }
+    fn use_internal_only(&self) -> bool {
+        self.config.internal_only
+    }
+    fn is_fake_mode(&self) -> bool {
+        self.config.fake
+    }
+    fn should_fork(&self) -> bool {
+        self.config.fork && self.config.all
+    }
     fn parse_options(&self) -> Result<(MsFlags, Option<String>), Box<dyn std::error::Error>> {
         let mut flags = MsFlags::empty();
         let mut data = Vec::new();
