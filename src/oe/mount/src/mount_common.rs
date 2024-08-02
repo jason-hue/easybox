@@ -173,13 +173,23 @@ impl Config {
             let source = if operation == Operation::Move {
                 options.value_of_os(options::DEVICE)
                     .map(|s| Source::Device(s.to_owned()))
-            } else {
+            }else if operation == Operation::MakeShared || operation == Operation::MakeSlave || operation == Operation::MakePrivate ||
+                operation == Operation::MakeUnbindable || operation == Operation::MakeRShared || operation == Operation::MakeRSlave ||
+                operation == Operation::MakeRPrivate || operation == Operation::MakeRUnbindable {
+                None
+
+            }else {
                 Self::parse_source(options)
             };
 
             let target = if operation == Operation::Move {
                 options.value_of_os("target_positional")
-            } else {
+            }else if operation == Operation::MakeShared || operation == Operation::MakeSlave || operation == Operation::MakePrivate ||
+                operation == Operation::MakeUnbindable || operation == Operation::MakeRShared || operation == Operation::MakeRSlave ||
+                operation == Operation::MakeRPrivate || operation == Operation::MakeRUnbindable  {
+                options.value_of_os(options::DEVICE)
+
+            }else {
                 options.value_of_os(options::TARGET)
                     .or_else(|| options.value_of_os("target_positional"))
             }.map(OsString::from);
@@ -503,7 +513,8 @@ impl ConfigHandler{
             Operation::Normal => self.perform_normal_mount()?,
             Operation::Bind => self.perform_bind_mount()?,
             Operation::Move => self.perform_move_mount()?,
-            Operation::RBind => self.perform_rbind_mount()?,
+            // Operation::RBind => self.perform_rbind_mount()?,//递归绑定挂载在绑定挂载中实现了
+            Operation::RBind => self.perform_bind_mount()?,
             Operation::MakeShared => self.make_mount_shared()?,
             Operation::MakeSlave => self.make_mount_slave()?,
             Operation::MakePrivate => self.make_mount_private()?,
@@ -862,54 +873,87 @@ impl ConfigHandler{
     fn perform_rbind_mount(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("Performing rbind mount");
         // 实现递归绑定挂载的逻辑
+        //在rbind实现了
         Ok(())
     }
 
     fn make_mount_shared(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("Making mount shared");
         // 实现设置共享挂载的逻辑
-        Ok(())
+        self.change_mount_propagation(MsFlags::MS_SHARED, false, "shared")
     }
 
     fn make_mount_slave(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("Making mount slave");
         // 实现设置从属挂载的逻辑
-        Ok(())
+        self.change_mount_propagation(MsFlags::MS_SLAVE, false, "slave")
     }
 
     fn make_mount_private(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("Making mount private");
         // 实现设置私有挂载的逻辑
-        Ok(())
+        self.change_mount_propagation(MsFlags::MS_PRIVATE, false, "private")
     }
 
     fn make_mount_unbindable(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("Making mount unbindable");
         // 实现设置不可绑定挂载的逻辑
-        Ok(())
+        self.change_mount_propagation(MsFlags::MS_UNBINDABLE, false, "unbindable")
     }
 
     fn make_mount_rshared(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("Making mount recursively shared");
         // 实现设置递归共享挂载的逻辑
-        Ok(())
+        self.change_mount_propagation(MsFlags::MS_SHARED, true, "recursively shared")
     }
 
     fn make_mount_rslave(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("Making mount recursively slave");
         // 实现设置递归从属挂载的逻辑
-        Ok(())
+        self.change_mount_propagation(MsFlags::MS_SLAVE, true, "recursively slave")
     }
 
     fn make_mount_rprivate(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("Making mount recursively private");
         // 实现设置递归私有挂载的逻辑
-        Ok(())
+        self.change_mount_propagation(MsFlags::MS_PRIVATE, true, "recursively private")
     }
 
     fn make_mount_runbindable(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("Making mount recursively unbindable");
         // 实现设置递归不可绑定挂载的逻辑
+        self.change_mount_propagation(MsFlags::MS_UNBINDABLE, true, "recursively unbindable")
+    }
+
+    fn change_mount_propagation(&self, flag: MsFlags, recursive: bool, prop_type: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let target = self.config.target.as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "No target specified"))?
+            .to_str()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid target path"))?;
+
+        if !Path::new(target).exists() {
+            return Err(Box::new(io::Error::new(io::ErrorKind::NotFound, format!("Target path does not exist: {}", target))));
+        }
+
+        let mut flags = flag;
+        if recursive {
+            flags |= MsFlags::MS_REC;
+        }
+
+        if self.is_fake_mode() {
+            println!("FAKE: Would change mount propagation of {} to {}", target, prop_type);
+        } else {
+            mount_fs(
+                None,
+                &target.to_string(),
+                None,
+                flags,
+                None,
+                self.use_internal_only()
+            )?;
+            println!("Successfully changed mount propagation of {} to {}", target, prop_type);
+        }
+
         Ok(())
     }
 }
