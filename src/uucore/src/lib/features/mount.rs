@@ -134,13 +134,6 @@ pub fn parse_mount_options(options: &str) -> MsFlags {
 }
 pub fn parse_fstab(path: &str) -> Result<Vec<Vec<String>>, Box<dyn std::error::Error>> {
     let path = Path::new(path);
-    if path.is_dir() {
-        return Err(Box::new(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!("{:?} 是一个目录,而不是文件", path)
-        )));
-    }
-
     let file = File::open(path).map_err(|e| format!("打开 fstab 文件失败: {}", e))?;
     let reader = BufReader::new(file);
     let re = Regex::new(r"^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)\s+(\d+)").unwrap();
@@ -197,4 +190,22 @@ pub fn find_device_by_uuid(uuid: &str) -> Result<String,Box<dyn std::error::Erro
         Err(io::Error::new(io::ErrorKind::NotFound, "Not found device by uuid").into())
     }
 
+}
+//检查路径是否是挂载点
+pub fn is_mount_point(path: &str) -> bool {
+    let file = match File::open("/proc/mounts") {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+
+    let reader = BufReader::new(file);
+    for line in reader.lines() {
+        if let Ok(line) = line {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() > 1 && parts[1] == path {
+                return true;
+            }
+        }
+    }
+    false
 }

@@ -1,7 +1,8 @@
 use std::any::Any;
 use std::ffi::OsString;
 use std::{fs, io};
-use std::io::{BufRead, Read};
+use std::fs::File;
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 use std::process::exit;
 use clap::{crate_version, Arg, Command, ArgGroup};
@@ -9,7 +10,7 @@ use nix::mount::MsFlags;
 use nix::unistd::{fork,ForkResult};
 use uucore::error::{UResult, USimpleError};
 use uucore::format_usage;
-use uucore::mount::{find_device_by_label, find_device_by_uuid, is_already_mounted, is_swapfile, mount_fs, parse_fstab, prepare_mount_source};
+use uucore::mount::{find_device_by_label, find_device_by_uuid, is_already_mounted, is_mount_point, is_swapfile, mount_fs, parse_fstab, prepare_mount_source};
 
 pub static BASE_CMD_PARSE_ERROR: i32 = 1;
 
@@ -63,7 +64,7 @@ pub enum Source {
     UUID(OsString),//通过文件系统 UUID 指定设备
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default,PartialEq)]
 pub enum Operation {
     #[default]
     Normal,
@@ -165,18 +166,28 @@ pub mod options{
 
 impl Config {
     pub fn from(options: &clap::ArgMatches) -> UResult<Self> {
-        //路径规范化
-        let (canonicalized_source,canonicalized_target) = if !options.is_present(options::NO_CANONICALIZE){
-            let mut source = Self::parse_source(options);
-            let target = options.value_of_os(options::TARGET)
-                .or_else(|| options.value_of_os("target_positional"))
-                .map(OsString::from);
+        let operation = Self::parse_operation(options);
+        let no_canonicalize = options.is_present(options::NO_CANONICALIZE);
+
+        let (canonicalized_source, canonicalized_target) = if !no_canonicalize {
+            let source = if operation == Operation::Move {
+                options.value_of_os(options::DEVICE)
+                    .map(|s| Source::Device(s.to_owned()))
+            } else {
+                Self::parse_source(options)
+            };
+
+            let target = if operation == Operation::Move {
+                options.value_of_os("target_positional")
+            } else {
+                options.value_of_os(options::TARGET)
+                    .or_else(|| options.value_of_os("target_positional"))
+            }.map(OsString::from);
+
             (
-                source.and_then(|s| match s{
-                    Source::Device(dev) => match fs::canonicalize(&dev){
-                        Ok(path) => {
-                            Some(Source::Device(path.into_os_string()))
-                        }
+                source.and_then(|s| match s {
+                    Source::Device(dev) => match fs::canonicalize(&dev) {
+                        Ok(path) => Some(Source::Device(path.into_os_string())),
                         Err(e) => {
                             eprintln!("警告：无法规范化设备路径 {:?}: {}", dev, e);
                             Some(Source::Device(dev))
@@ -185,8 +196,8 @@ impl Config {
                     Source::Label(label) => Some(Source::Label(label)),
                     Source::UUID(uuid) => Some(Source::UUID(uuid))
                 }),
-                target.and_then(|t|  {
-                    match fs::canonicalize(&t){
+                target.and_then(|t| {
+                    match fs::canonicalize(&t) {
                         Ok(path) => Some(path.into_os_string()),
                         Err(e) => {
                             eprintln!("警告：无法规范化设备路径 {:?}: {}", t, e);
@@ -195,12 +206,23 @@ impl Config {
                     }
                 })
             )
+        } else {
+            // 如果指定了不规范化，则直接使用原始路径
+            let source = if operation == Operation::Move {
+                options.value_of_os(options::DEVICE)
+                    .map(|s| Source::Device(s.to_owned()))
+            } else {
+                Self::parse_source(options)
+            };
 
+            let target = if operation == Operation::Move {
+                options.value_of_os("target_positional")
+            } else {
+                options.value_of_os(options::TARGET)
+                    .or_else(|| options.value_of_os("target_positional"))
+            }.map(OsString::from);
 
-        }else {
-            (Self::parse_source(options),options.value_of_os(options::TARGET)
-                .or_else(|| options.value_of_os("target_positional"))
-                .map(OsString::from))
+            (source, target)
         };
 
         Ok(Self {
@@ -380,10 +402,7 @@ impl ConfigHandler{
         }
     }
     pub fn process(&self) -> Result<(), Box<dyn std::error::Error>> {
-        if let Err(e) = self.handle_basic_options() {
-            eprintln!("Error handling basic options: {}", e);
-            return Err(e);
-        }
+        self.handle_basic_options()?;
         self.handle_mount_options()?;
         self.handle_source_and_target()?;
         self.handle_namespace()?;
@@ -663,6 +682,11 @@ impl ConfigHandler{
         } else {
             if !is_already_mounted(*target).unwrap() {
                 let source = prepare_mount_source(&mount_source).unwrap();
+                if self.config.show_labels {
+                    if let Some(label) = self.get_filesystem_label(&source)? {
+                        println!("挂载文件系统，标签: {}", label);
+                    }
+                }
                 mount_fs(Some(&source), &target.to_string(), Some(fstype.clone().unwrap().as_str()), flags, data,interal_only).map_err(|e| {
                     eprintln!("挂载失败: {:?}", e);
                     eprintln!("源: {:?}, 目标: {}, 文件系统类型: {:?}, 标志: {:?}, 选项: {:?}",
@@ -678,6 +702,28 @@ impl ConfigHandler{
     fn convert_uresult<T>(result: UResult<T>) -> Result<T, Box<dyn std::error::Error>> {
         result.map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())) as Box<dyn std::error::Error>)
     }
+
+    fn get_filesystem_label(&self, device: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        let output = std::process::Command::new("blkid")
+            .arg("-s")
+            .arg("LABEL")
+            .arg("-o")
+            .arg("value")
+            .arg(device)
+            .output()?;
+
+        if output.status.success() {
+            let label = String::from_utf8(output.stdout)?.trim().to_string();
+            if !label.is_empty() {
+                Ok(Some(label))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
     fn use_internal_only(&self) -> bool {
         self.config.internal_only
     }
@@ -725,13 +771,92 @@ impl ConfigHandler{
     fn perform_bind_mount(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("Performing bind mount");
         // 实现绑定挂载的逻辑
+
+        // 获取源路径
+        let source = match &self.config.source {
+            Some(Source::Device(dev)) => dev.to_str()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid source path"))?,
+            _ => return Err(Box::new(io::Error::new(io::ErrorKind::InvalidInput, "Bind mount requires a source path"))),
+        };
+
+        // 获取目标路径
+        let target = self.config.target.as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "No target specified"))?
+            .to_str()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid target path"))?;
+
+        // 检查源路径和目标路径是否存在
+        if !Path::new(source).exists() {
+            return Err(Box::new(io::Error::new(io::ErrorKind::NotFound, format!("Source path does not exist: {}", source))));
+        }
+        if !Path::new(target).exists() {
+            return Err(Box::new(io::Error::new(io::ErrorKind::NotFound, format!("Target path does not exist: {}", target))));
+        }
+
+        // 设置绑定挂载的标志
+        let mut flags = MsFlags::MS_BIND;
+
+        // 如果需要递归绑定挂载（rbind），添加 MS_REC 标志
+        if self.config.operation == Operation::RBind {
+            flags |= MsFlags::MS_REC;
+        }
+
+        // 执行绑定挂载
+        if self.is_fake_mode() {
+            println!("FAKE: Would bind mount {} to {}", source, target);
+        } else {
+            mount_fs(
+                Some(&source.to_string()),
+                &target.to_string(),
+                None, // 绑定挂载不需要指定文件系统类型
+                flags,
+                None, // 绑定挂载不需要额外的数据
+                self.use_internal_only()
+            )?;
+            println!("Successfully bind mounted {} to {}", source, target);
+        }
         Ok(())
     }
 
     fn perform_move_mount(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("Performing move mount");
-        // 实现移动挂载的逻辑
-        Ok(())
+        println!("执行移动挂载操作");
+
+        // 获取源路径
+        let source = match &self.config.source {
+            Some(Source::Device(dev)) => dev.to_str().ok_or("源设备路径包含无效的UTF-8字符")?,
+            Some(Source::Label(_)) | Some(Source::UUID(_)) => return Err("移动操作不支持使用标签或UUID".into()),
+            None => return Err("移动操作需要指定源挂载点".into()),
+        };
+
+        // 获取目标路径
+        let target = self.config.target.as_ref()
+            .ok_or("移动操作需要指定目标挂载点")?
+            .to_str()
+            .ok_or("目标路径包含无效的UTF-8字符")?;
+
+        // 检查源路径和目标路径是否存在
+        if !Path::new(source).exists() {
+            return Err(format!("源路径不存在: {}", source).into());
+        }
+        if !Path::new(target).exists() {
+            return Err(format!("目标路径不存在: {}", target).into());
+        }
+
+        // 检查源路径是否是一个挂载点
+        if !is_mount_point(source) {
+            return Err(format!("源路径不是一个挂载点: {}", source).into());
+        }
+        let interal_only = self.config.internal_only;
+        // 执行移动挂载操作
+        match mount_fs(Some(&source.to_string()), &target.to_string(), None, MsFlags::MS_MOVE, None, interal_only) {
+            Ok(_) => {
+                println!("成功将挂载点从 {} 移动到 {}", source, target);
+                Ok(())
+            },
+            Err(e) => {
+                Err(format!("移动挂载失败: {} -> {}, 错误: {}", source, target, e).into())
+            }
+        }
     }
 
     fn perform_rbind_mount(&self) -> Result<(), Box<dyn std::error::Error>> {

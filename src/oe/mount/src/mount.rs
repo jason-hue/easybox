@@ -21,7 +21,7 @@ pub fn oemain(args: impl uucore::Args) -> UResult<()> {
             println!("Mount operation completed successfully.");
         },
         Err(e) => {
-            eprintln!("Error during mount operation: {}", e);
+            // eprintln!("Error during mount operation: {}", e);
             return Err(USimpleError::new(1, format!("Mount operation failed: {}", e)));
         }
     }
