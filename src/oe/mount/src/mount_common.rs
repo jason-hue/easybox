@@ -1,8 +1,10 @@
 use std::any::Any;
 use std::ffi::OsString;
 use std::{fs, io};
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
+use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::process::exit;
 use clap::{crate_version, Arg, Command, ArgGroup};
@@ -11,7 +13,7 @@ use nix::unistd::{fork,ForkResult};
 use uucore::error::{UResult, USimpleError};
 use uucore::format_usage;
 use uucore::mount::{find_device_by_label, find_device_by_uuid, is_already_mounted, is_mount_point, is_swapfile, mount_fs, parse_fstab, prepare_mount_source};
-
+use nix::sched::{setns, CloneFlags};
 pub static BASE_CMD_PARSE_ERROR: i32 = 1;
 
 ///保存参数
@@ -412,10 +414,10 @@ impl ConfigHandler{
         }
     }
     pub fn process(&self) -> Result<(), Box<dyn std::error::Error>> {
+        self.handle_namespace()?;
         self.handle_basic_options()?;
         self.handle_mount_options()?;
         self.handle_source_and_target()?;
-        self.handle_namespace()?;
         self.handle_operation()?;
         Ok(())
     }
@@ -424,29 +426,29 @@ impl ConfigHandler{
             self.mount_all_filesystems()?;
         }
         if self.config.no_canonicalize {
-            println!("Path canonicalization disabled");
+            self.verbose_print("Path canonicalization disabled");
 
         }
         if self.config.fake {
-            println!("Running in fake mode - no actual mounting will occur");
+            self.verbose_print("Running in fake mode - no actual mounting will occur");
         }
         if self.config.fork {
-            println!("Forking enabled for each device");
+            self.verbose_print("Forking enabled for each device");
         }
         if let Some(fstab) = &self.config.fstab {
             self.use_alternative_fstab(fstab)?;
         }
         if self.config.internal_only {
-            println!("Using internal mount helpers only");
+            self.verbose_print("Using internal mount helpers only");
         }
         if self.config.show_labels {
-            println!("Filesystem labels will be displayed");
+            self.verbose_print("Filesystem labels will be displayed");
         }
         if self.config.no_mtab {
-            println!("/etc/mtab will not be updated");
+            self.verbose_print("/etc/mtab will not be updated");
         }
         if self.config.verbose {
-            println!("Verbose mode enabled");
+            self.verbose_print("Verbose mode enabled");
         }
         Ok(())
     }
@@ -484,18 +486,18 @@ impl ConfigHandler{
     fn handle_source_and_target(&self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(source) = &self.config.source {
             match source {
-                Source::Device(device) => println!("Source device: {:?}", device),
-                Source::Label(label) => println!("Source label: {:?}", label),
-                Source::UUID(uuid) => println!("Source UUID: {:?}", uuid),
+                Source::Device(device) => self.verbose_print(&format!("Source device: {:?}", device)),
+                Source::Label(label) => self.verbose_print(&format!("Source label: {:?}", label)),
+                Source::UUID(uuid) => self.verbose_print(&format!("Source UUID: {:?}", uuid)),
             }
         }
 
         if let Some(target) = &self.config.target {
-            println!("Mount target: {:?}", target);
+            self.verbose_print(&format!("Mount target: {:?}", target));
         }
 
         if let Some(prefix) = &self.config.target_prefix {
-            println!("Target prefix: {:?}", prefix);
+            self.verbose_print(&format!("Target prefix: {:?}", prefix));
         }
 
         Ok(())
@@ -503,7 +505,8 @@ impl ConfigHandler{
 
     fn handle_namespace(&self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(ns) = &self.config.namespace {
-            println!("Using namespace: {:?}", ns);
+            self.verbose_print(&format!("Using namespace: {:?}", ns));
+            self.enter_namespace()?;
         }
         Ok(())
     }
@@ -527,8 +530,30 @@ impl ConfigHandler{
         Ok(())
     }
     // 辅助方法
+    fn verbose_print(&self, message: &str) {
+        if self.config.verbose {
+            println!("VERBOSE: {}", message);
+        }
+    }
+    fn should_update_mtab(&self) -> bool {
+        !self.config.no_mtab
+    }
+    fn update_mtab(&self, source: &str, target: &str, fstype: &str, options: &str) -> Result<(), Box<dyn std::error::Error>> {
+        if !self.should_update_mtab() {
+            self.verbose_print("Skipping mtab update due to --no-mtab option");
+            return Ok(());
+        }
+
+        self.verbose_print("Updating /etc/mtab");
+        // 这里应该实现更新 /etc/mtab 的逻辑
+        // 注意：在现代系统中，这通常不是必要的，因为 /etc/mtab 通常是 /proc/self/mounts 的符号链接
+        // 但是为了完整性，我们可以添加一个模拟的更新操作
+        self.verbose_print(&format!("Would update /etc/mtab with: {} {} {} {}", source, target, fstype, options));
+
+        Ok(())
+    }
     fn mount_all_filesystems(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("Mounting all filesystems from /etc/fstab");
+        self.verbose_print("Mounting all filesystems from /etc/fstab");
         let fstab_path = "/etc/fstab";
         let fstab_file = parse_fstab(fstab_path).unwrap();
         // 实现挂载所有文件系统的逻辑
@@ -538,6 +563,7 @@ impl ConfigHandler{
             let mut target = &line_vec[1];
             let fstype = line_vec[2].as_str().clone();
             let flags = MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID;
+            let fstab_options = &line_vec[3];
             // if is_already_mounted(target).unwrap(){
             //     println!("文件系统路径：{}已经挂载过了！跳过！", target);
             //     continue
@@ -548,6 +574,12 @@ impl ConfigHandler{
             // }
             // mount_fs(mount_source.as_ref(), &target, Some(fstype), flags, data).expect("Mount failed!");
             // println!("Mount successful!");
+            if let Some(test_opts) = &self.config.options.test_opts {
+                if !self.match_test_opts(fstab_options, test_opts) {
+                    self.verbose_print(&format!("Skipping mount of {} due to test_opts", target));
+                    continue;
+                }
+            }
             if self.should_fork(){
                 match unsafe{fork()} {
                     Ok(ForkResult::Parent {child}) => {
@@ -587,7 +619,15 @@ impl ConfigHandler{
         }
         Ok(())
     }
+    fn match_test_opts(&self, fstab_opts: &str, test_opts: &OsString) -> bool {
+        let fstab_opts_set: HashSet<&str> = fstab_opts.split(',').collect();
+        let test_opts_set: HashSet<&str> = test_opts.to_str().unwrap_or("").split(',').collect();
+
+        test_opts_set.is_subset(&fstab_opts_set)
+    }
     fn mount_single_filesystem(&self, source: &str, target: &str, fstype: &str) -> Result<(), Box<dyn std::error::Error>> {
+        self.verbose_print(&format!("Mount source: {}", source));
+        self.verbose_print(&format!("Mount target: {}", target));
         let mount_source = Some(prepare_mount_source(source).unwrap());
         let flags = MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID;
         let data = None;
@@ -602,18 +642,19 @@ impl ConfigHandler{
         }
 
         if self.is_fake_mode() {
-            println!("FAKE: Would mount {} on {} with type {}", source, target, fstype);
+            self.verbose_print(&format!("FAKE: Would mount {} on {} with type {}", source, target, fstype));
         } else {
             mount_fs(mount_source.as_ref(), &target.to_string(), Some(fstype), flags, data,interal_only)?;
-            println!("Mount successful: {} on {}", source, target);
+            self.verbose_print(&format!("Mount successful: {} on {}", source, target));
+            self.update_mtab(&mount_source.unwrap(), target, fstype, "")?;
         }
 
         Ok(())
     }
     fn use_alternative_fstab(&self, fstab: &OsString) -> Result<(), Box<dyn std::error::Error>> {
-        println!("使用替代 fstab: {:?}", fstab);
-        let fstab_path = fstab.to_str().ok_or_else(|| std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
+        self.verbose_print(&format!("使用替代 fstab: {:?}", fstab));
+        let fstab_path = fstab.to_str().ok_or_else(|| io::Error::new(
+            io::ErrorKind::InvalidInput,
             "无效的 fstab 路径".to_string()
         ))?;
         let path = Path::new(fstab_path);
@@ -631,18 +672,18 @@ impl ConfigHandler{
                     // 对每个 fstab 条目执行挂载操作
                     let source = &entry[0];
                     let mount_source = prepare_mount_source(source)
-                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+                        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
                     let target = &entry[1];
                     let fstype = &entry[2];
                     self.mount_single_filesystem(&mount_source, target, fstype)?;
                 }
                 Ok(())
             },
-            Err(e) => Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))
+            Err(e) => Err(Box::new(io::Error::new(io::ErrorKind::Other, e.to_string())))
         }
     }
     fn perform_normal_mount(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("Performing normal mount");
+        self.verbose_print("Performing normal mount");
         // 实现正常挂载的逻辑
         let mount_source = match &self.config.source {
             Some(Source::Device(dev)) => dev.to_str()
@@ -664,9 +705,13 @@ impl ConfigHandler{
 
             None => return Err(Box::new(io::Error::new(io::ErrorKind::InvalidInput, "No source specified"))),
         };
+        self.verbose_print(&format!("Mount source: {}", mount_source));
         let target = &self.config.target.as_ref().ok_or_else(||io::Error::new(io::ErrorKind::InvalidInput,"No target specified!"))?
             .to_str().ok_or_else(||io::Error::new(io::ErrorKind::InvalidData,"Invalid target path!")).unwrap();
+        self.verbose_print(&format!("Mount target: {}", target));
         let (flags,options) = self.parse_options()?;
+        self.verbose_print(&format!("Mount flags: {:?}", flags));
+        self.verbose_print(&format!("Mount options: {:?}", options));
         let fstype = if let Some(t) = self.config.options.types.as_ref()
             .and_then(|t|t.to_str()){
             Some(t.to_string())
@@ -688,8 +733,8 @@ impl ConfigHandler{
         let data = None;
         let interal_only = self.use_internal_only();
         if self.is_fake_mode() {
-            println!("FAKE: Would mount {} on {} with type {:?}, flags {:?}, and options {:?}",
-                     mount_source, target, fstype.unwrap(), flags, options);
+            self.verbose_print(&format!("FAKE: Would mount {} on {} with type {:?}, flags {:?}, and options {:?}",
+                                        mount_source, target, fstype.unwrap(), flags, options));
         } else {
             if !is_already_mounted(*target).unwrap() {
                 let source = prepare_mount_source(&mount_source).unwrap();
@@ -704,6 +749,8 @@ impl ConfigHandler{
                               source, target, fstype, flags, options);
                     e
                 })?;
+                self.update_mtab(&source, target, fstype.unwrap().as_str(), "")?;
+                self.verbose_print("Mount operation completed");
             } else {
                 println!("已经挂载过！");
             }
@@ -778,11 +825,27 @@ impl ConfigHandler{
 
         Ok((flags, data_string))
     }
+    fn enter_namespace(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(ns) = &self.config.namespace {
+            self.verbose_print(&format!("Entering namespace: {:?}", ns));
 
+            let ns_file = File::open(ns)?;
+
+            // 使用 scopeguard 来确保文件描述符被正确关闭
+            let _guard = scopeguard::guard(ns_file, |f| drop(f));
+
+            unsafe {
+                setns(_guard.as_raw_fd(), CloneFlags::CLONE_NEWNS)
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to enter namespace: {}", e)))?;
+            }
+
+            self.verbose_print("Successfully entered the specified namespace");
+        }
+        Ok(())
+    }
     fn perform_bind_mount(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("Performing bind mount");
+        self.verbose_print("Performing bind mount");
         // 实现绑定挂载的逻辑
-
         // 获取源路径
         let source = match &self.config.source {
             Some(Source::Device(dev)) => dev.to_str()
@@ -814,7 +877,7 @@ impl ConfigHandler{
 
         // 执行绑定挂载
         if self.is_fake_mode() {
-            println!("FAKE: Would bind mount {} to {}", source, target);
+            self.verbose_print(&format!("FAKE: Would bind mount {} to {}", source, target));
         } else {
             mount_fs(
                 Some(&source.to_string()),
@@ -824,14 +887,13 @@ impl ConfigHandler{
                 None, // 绑定挂载不需要额外的数据
                 self.use_internal_only()
             )?;
-            println!("Successfully bind mounted {} to {}", source, target);
+            self.verbose_print(&format!("Successfully bind mounted {} to {}", source, target));
         }
         Ok(())
     }
 
     fn perform_move_mount(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("执行移动挂载操作");
-
+        self.verbose_print("执行移动挂载操作");
         // 获取源路径
         let source = match &self.config.source {
             Some(Source::Device(dev)) => dev.to_str().ok_or("源设备路径包含无效的UTF-8字符")?,
@@ -861,7 +923,7 @@ impl ConfigHandler{
         // 执行移动挂载操作
         match mount_fs(Some(&source.to_string()), &target.to_string(), None, MsFlags::MS_MOVE, None, interal_only) {
             Ok(_) => {
-                println!("成功将挂载点从 {} 移动到 {}", source, target);
+                self.verbose_print(&format!("成功将挂载点从 {} 移动到 {}", source, target));
                 Ok(())
             },
             Err(e) => {
@@ -871,56 +933,56 @@ impl ConfigHandler{
     }
 
     fn perform_rbind_mount(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("Performing rbind mount");
+        self.verbose_print("Performing rbind mount");
         // 实现递归绑定挂载的逻辑
         //在rbind实现了
         Ok(())
     }
 
     fn make_mount_shared(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("Making mount shared");
+        self.verbose_print("Making mount shared");
         // 实现设置共享挂载的逻辑
         self.change_mount_propagation(MsFlags::MS_SHARED, false, "shared")
     }
 
     fn make_mount_slave(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("Making mount slave");
+        self.verbose_print("Making mount slave");
         // 实现设置从属挂载的逻辑
         self.change_mount_propagation(MsFlags::MS_SLAVE, false, "slave")
     }
 
     fn make_mount_private(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("Making mount private");
+        self.verbose_print("Making mount private");
         // 实现设置私有挂载的逻辑
         self.change_mount_propagation(MsFlags::MS_PRIVATE, false, "private")
     }
 
     fn make_mount_unbindable(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("Making mount unbindable");
+        self.verbose_print("Making mount unbindable");
         // 实现设置不可绑定挂载的逻辑
         self.change_mount_propagation(MsFlags::MS_UNBINDABLE, false, "unbindable")
     }
 
     fn make_mount_rshared(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("Making mount recursively shared");
+        self.verbose_print("Making mount recursively shared");
         // 实现设置递归共享挂载的逻辑
         self.change_mount_propagation(MsFlags::MS_SHARED, true, "recursively shared")
     }
 
     fn make_mount_rslave(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("Making mount recursively slave");
+        self.verbose_print("Making mount recursively slave");
         // 实现设置递归从属挂载的逻辑
         self.change_mount_propagation(MsFlags::MS_SLAVE, true, "recursively slave")
     }
 
     fn make_mount_rprivate(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("Making mount recursively private");
+        self.verbose_print("Making mount recursively private");
         // 实现设置递归私有挂载的逻辑
         self.change_mount_propagation(MsFlags::MS_PRIVATE, true, "recursively private")
     }
 
     fn make_mount_runbindable(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("Making mount recursively unbindable");
+        self.verbose_print("Making mount recursively unbindable");
         // 实现设置递归不可绑定挂载的逻辑
         self.change_mount_propagation(MsFlags::MS_UNBINDABLE, true, "recursively unbindable")
     }
@@ -941,7 +1003,7 @@ impl ConfigHandler{
         }
 
         if self.is_fake_mode() {
-            println!("FAKE: Would change mount propagation of {} to {}", target, prop_type);
+            self.verbose_print(&format!("FAKE: Would change mount propagation of {} to {}", target, prop_type));
         } else {
             mount_fs(
                 None,
@@ -951,7 +1013,7 @@ impl ConfigHandler{
                 None,
                 self.use_internal_only()
             )?;
-            println!("Successfully changed mount propagation of {} to {}", target, prop_type);
+            self.verbose_print(&format!("Successfully changed mount propagation of {} to {}", target, prop_type));
         }
 
         Ok(())
