@@ -43,6 +43,8 @@ linux = [
     "killall",
     "md5sum",
     "sysctl",
+    "mount",
+    "umount"
 ]
 ##
 # * bypass/override ~ translate 'test' feature name to avoid dependency collision with rust core 'test' crate (o/w surfaces as compiler errors during testing)
@@ -70,6 +72,8 @@ members = [
   "src/oe/killall",
   "src/oe/md5sum",
   "src/oe/sysctl",
+  "src/oe/mount",
+  "src/oe/umount"
 ]
 
 [dependencies]
@@ -102,6 +106,9 @@ sha256sum  = { optional=true, version="0.0.1", package="oe_sha256sum", path="src
 killall = { optional=true, version="0.0.1", package="oe_killall", path="src/oe/killall" }
 md5sum  = { optional=true, version="0.0.1", package="oe_md5sum", path="src/oe/md5sum" }
 sysctl = { optional=true, version="0.0.1", package="oe_sysctl", path="src/oe/sysctl" }
+mount = { optional=true, version="0.0.1", package="oe_mount", path="src/oe/mount" }
+umount = { optional=true, version="0.0.1", package="oe_umount", path="src/oe/umount" }
+
 
 # this breaks clippy linting with: "tests/by-util/test_factor_benches.rs: No such file or directory (os error 2)"
 # factor_benches = { optional = true, version = "0.0.0", package = "uu_factor_benches", path = "tests/benches/factor" }

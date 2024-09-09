@@ -16,6 +16,10 @@ pub mod pretty_float;
 pub mod ringbuffer;
 #[cfg(feature = "memo")]
 mod tokenize;
+#[cfg(feature = "mount")]
+pub mod mount;
+#[cfg(feature = "umount")]
+pub mod umount;
 
 // * (platform-specific) feature-gated modules
 // ** non-windows (i.e. Unix + Fuchsia)
