@@ -500,7 +500,7 @@ impl UmountHandler {
 
         // Execute ioctl call
         unsafe {
-            if nix::libc::ioctl(fd, LOOP_CLR_FD, 0) == -1 {
+            if nix::libc::ioctl(fd, LOOP_CLR_FD.try_into().unwrap(), 0) == -1 {
                 return Err(Box::new(std::io::Error::last_os_error()));
             }
         }
