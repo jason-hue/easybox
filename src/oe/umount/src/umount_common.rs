@@ -3,7 +3,7 @@ use std::fs::File;
 use std::{fs, io};
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader};
-use std::os::fd::AsRawFd;
+use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use clap::{crate_version, Arg, Command, ArgGroup};
 use nix::mount::{MntFlags, MsFlags};
