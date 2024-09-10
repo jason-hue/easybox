@@ -105,21 +105,21 @@ pub fn umount_app<'a>(about: &'a str, usage: &'a str) -> Command<'a> {
         .override_usage(format_usage(usage))
         .infer_long_args(true);
 
-    cmd = cmd.arg(Arg::new("target").help("指定要卸载的目标").index(1).allow_invalid_utf8(true));
+    cmd = cmd.arg(Arg::new("target").help("Specify the target to unmount").index(1).allow_invalid_utf8(true));
 
     for (name, short, help) in &[
-        (options::ALL, Some('a'), "卸载所有文件系统"),
-        (options::ALL_TARGETS, Some('A'), "卸载当前名字空间内指定设备对应的所有挂载点"),
-        (options::NO_CANONICALIZE, Some('c'), "不对路径规范化"),
-        (options::DETACH_LOOP, Some('d'), "若挂载了回环设备，也释放该回环设备"),
-        (options::FAKE, None, "空运行；跳过 umount(2) 系统调用"),
-        (options::FORCE, Some('f'), "强制卸载(遇到不响应的 NFS 系统时)"),
-        (options::INTERNAL_ONLY, Some('i'), "不调用 umount.<类型> 辅助程序"),
-        (options::NO_MTAB, Some('n'), "不写 /etc/mtab"),
-        (options::LAZY, Some('l'), "立即断开文件系统，清理以后执行"),
-        (options::RECURSIVE, Some('R'), "递归卸载目录及其子对象"),
-        (options::READ_ONLY, Some('r'), "若卸载失败，尝试以只读方式重新挂载"),
-        (options::VERBOSE, Some('v'), "打印当前进行的操作"),
+        (options::ALL, Some('a'), "Unmount all filesystems"),
+        (options::ALL_TARGETS, Some('A'), "Unmount all mount points for the specified device in the current namespace"),
+        (options::NO_CANONICALIZE, Some('c'), "Don't canonicalize paths"),
+        (options::DETACH_LOOP, Some('d'), "If mounted loop device, also free this loop device"),
+        (options::FAKE, None, "Dry run; skip the umount(2) system call"),
+        (options::FORCE, Some('f'), "Force unmount (in case of an unreachable NFS system)"),
+        (options::INTERNAL_ONLY, Some('i'), "Don't call the umount.<type> helper program"),
+        (options::NO_MTAB, Some('n'), "Don't write to /etc/mtab"),
+        (options::LAZY, Some('l'), "Detach the filesystem now, clean up things later"),
+        (options::RECURSIVE, Some('R'), "Recursively unmount a target with all its children"),
+        (options::READ_ONLY, Some('r'), "In case unmounting fails, try to remount read-only"),
+        (options::VERBOSE, Some('v'), "Print current action"),
         (options::QUIET, Some('q'), "suppress 'not mounted' error messages"),
         (options::HELP, Some('h'), "display this help"),
         (options::VERSION, Some('V'), "display version"),
@@ -129,8 +129,8 @@ pub fn umount_app<'a>(about: &'a str, usage: &'a str) -> Command<'a> {
     }
 
     for (name, short, help, value_name) in &[
-        (options::TEST_OPTS, Some('O'), "限制文件系统集合(和 -a 选项一起使用)", "列表"),
-        (options::TYPES, Some('t'), "限制文件系统集合", "列表"),
+        (options::TEST_OPTS, Some('O'), "Limit the set of filesystems (use with -a)", "list"),
+        (options::TYPES, Some('t'), "Limit the set of filesystem types", "list"),
         (options::NAMESPACE, Some('N'), "perform umount in another namespace", "ns"),
     ] {
         let arg = Arg::new(*name).long(*name).help(*help).value_name(*value_name).takes_value(true).allow_invalid_utf8(true);
@@ -244,7 +244,7 @@ impl UmountHandler {
     fn should_umount(&self, mount_point: &str, fs_type: &str) -> bool {
         if let Some(types) = &self.config.types {
             let types_str = types.to_str().unwrap_or_else(|| {
-                log::warn!("无法将文件系统类型转换为字符串，使用空字符串");
+                log::warn!("Unable to convert filesystem types to string, using empty string");
                 ""
             });
             let allowed_types: HashSet<_> = types_str.split(',').collect();
@@ -255,7 +255,7 @@ impl UmountHandler {
 
         if let Some(test_opts) = &self.config.test_opts {
             let test_opts_str = test_opts.to_str().unwrap_or_else(|| {
-                log::warn!("无法将测试选项转换为字符串，使用空字符串");
+                log::warn!("Unable to convert test options to string, using empty string");
                 ""
             });
             let mount_opts = self.get_mount_options(mount_point);
@@ -286,12 +286,12 @@ impl UmountHandler {
     fn umount_all_targets(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.verbose_print("Unmounting all targets for the specified device");
         // Implement logic to unmount all targets for a device
-        // 读取 /proc/mounts 文件获取所有挂载点信息
+        // Read /proc/mounts file to get all mount point information
         let mounts = fs::read_to_string("/proc/mounts")?;
         let device_to_unmount = self.config.target.as_ref()
             .ok_or("No device specified for unmounting all targets")?;
 
-        // 遍历所有挂载点，找到匹配的设备并卸载
+        // Iterate through all mount points, find matching devices and unmount
         for line in mounts.lines() {
             let fields: Vec<&str> = line.split_whitespace().collect();
             if fields.len() >= 2 && fields[0] == device_to_unmount {
@@ -313,9 +313,9 @@ impl UmountHandler {
         let loop_device = self.get_loop_device(target);
         if !self.config.fake {
             if !nix::unistd::geteuid().is_root() {
-                return Err("需要 root 权限来卸载文件系统".into());
+                return Err("Root privileges are required to unmount filesystems".into());
             }
-            // 这里使用 umount_fs 函数来实际执行卸载操作
+            // Use the umount_fs function to actually perform the unmount operation
             let result = if self.config.force || self.config.lazy {
                 let mut flags = MntFlags::empty();
                 if self.config.force {
@@ -351,7 +351,7 @@ impl UmountHandler {
                         self.verbose_print(&format!("Unmount failed, attempting read-only remount for {}", target));
                         self.remount_read_only(target)?;
                     } else if !self.config.quiet{
-                        eprintln!("卸载 {} 失败: {}", target, e);
+                        eprintln!("Failed to unmount {}: {}", target, e);
                         return Err(Box::new(e));
                     }
                 }
@@ -362,36 +362,36 @@ impl UmountHandler {
 
     fn verbose_print(&self, message: &str) {
         if self.config.verbose && !self.config.quiet {
-            println!("详细信息: {}", message);
+            println!("Verbose: {}", message);
         }
     }
 
     fn enter_namespace(&self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(ns) = &self.config.namespace {
-            self.verbose_print(&format!("正在进入命名空间: {:?}", ns));
+            self.verbose_print(&format!("Entering namespace: {:?}", ns));
 
-            let ns_file = File::open(ns).map_err(|e| format!("打开命名空间文件失败: {}", e))?;
+            let ns_file = File::open(ns).map_err(|e| format!("Failed to open namespace file: {}", e))?;
 
             let _guard = scopeguard::guard(ns_file, |f| drop(f));
 
             setns(_guard.as_raw_fd(), CloneFlags::CLONE_NEWNS)
-                .map_err(|e| format!("进入命名空间失败: {}", e))?;
+                .map_err(|e| format!("Failed to enter namespace: {}", e))?;
 
 
-            self.verbose_print("成功进入指定的命名空间");
+            self.verbose_print("Successfully entered the specified namespace");
         }
         Ok(())
     }
     fn detach_loop_device(&self, device: &str) -> Result<(), Box<dyn std::error::Error>> {
         self.verbose_print(&format!("Attempting to detach loop device for {}", device));
-        // 打开设备文件
+        // Open the device file
         let file = File::open(&device)?;
         let fd = file.as_raw_fd();
 
-        // LOOP_CLR_FD 的 ioctl 请求码
+        // LOOP_CLR_FD ioctl request code
         const LOOP_CLR_FD: nix::libc::c_ulong = 0x4C01;
 
-        // 执行 ioctl 调用
+        // Execute ioctl call
         unsafe {
             if nix::libc::ioctl(fd, LOOP_CLR_FD, 0) == -1 {
                 return Err(Box::new(std::io::Error::last_os_error()));
@@ -402,7 +402,7 @@ impl UmountHandler {
     fn get_loop_device(&self, target: &str) -> Result<String, Box<dyn std::error::Error>> {
         self.verbose_print(&format!("Attempting to find loop device for target: {}", target));
         let target_path = Path::new(target).canonicalize()?;
-        // 方法1: 检查 /proc/mounts
+        // Method 1: Check /proc/mounts
         let mounts = fs::read_to_string("/proc/mounts")?;
         for line in mounts.lines() {
             let fields: Vec<&str> = line.split_whitespace().collect();
@@ -416,7 +416,7 @@ impl UmountHandler {
         }
 
 
-        // 方法2: 使用 losetup 命令
+        // Method 2: Use losetup command
         let output = std::process::Command::new("losetup")
             .arg("-a")
             .output()?;
@@ -458,8 +458,8 @@ impl UmountHandler {
                 let entry = entry?;
                 let path = entry.path();
                 if path.is_dir() {
-                    if let Err(e) = self.umount_recursive(path.to_str().ok_or("无效路径")?) {
-                        log::warn!("递归卸载 {} 时出错: {}", path.display(), e);
+                    if let Err(e) = self.umount_recursive(path.to_str().ok_or("Invalid path")?) {
+                        log::warn!("Error during recursive unmount of {}: {}", path.display(), e);
                     }
                 }
             }
@@ -468,10 +468,10 @@ impl UmountHandler {
     }
 
     fn update_mtab(&self, target: &str) -> Result<(), Box<dyn std::error::Error>> {
-        self.verbose_print(&format!("更新 /etc/mtab，移除 {}", target));
+        self.verbose_print(&format!("Updating /etc/mtab, removing {}", target));
 
         if fs::symlink_metadata("/etc/mtab")?.file_type().is_symlink() {
-            self.verbose_print("/etc/mtab 是符号链接，不需要更新");
+            self.verbose_print("/etc/mtab is a symlink, no update needed");
             return Ok(());
         }
 

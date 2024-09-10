@@ -16,75 +16,72 @@ use uucore::mount::{find_device_by_label, find_device_by_uuid, is_already_mounte
 use nix::sched::{setns, CloneFlags};
 pub static BASE_CMD_PARSE_ERROR: i32 = 1;
 
-///保存参数
 #[derive(Debug, Default)]
 pub struct Config {
-    // 基本选项
-    pub all: bool,// 挂载 /etc/fstab 文件中提到的所有文件系统
-    pub no_canonicalize: bool,//不对路径进行规范化处理
-    pub fake: bool,//模拟挂载,不实际执行 mount 系统调用
-    pub fork: bool,//为每个设备创建一个新进程(与 -a 一起使用)
-    pub fstab: Option<OsString>,//指定替代 /etc/fstab 的文件
-    pub internal_only: bool,//不调用 mount.<type> 辅助程序
-    pub show_labels: bool,//显示文件系统标签
-    pub no_mtab: bool,//不写入 /etc/mtab 文件
-    pub verbose: bool,//显示详细的操作信息
-    pub help: bool,//显示帮助信息
-    pub version: bool,//显示版本信息
+    // Basic options
+    pub all: bool,// Mount all filesystems mentioned in /etc/fstab
+    pub no_canonicalize: bool,// Don't canonicalize paths
+    pub fake: bool,// Simulate mounting, don't actually call mount system call
+    pub fork: bool,// Fork for each device (used with -a)
+    pub fstab: Option<OsString>,// Specify alternative file to /etc/fstab
+    pub internal_only: bool,// Don't call mount.<type> helper program
+    pub show_labels: bool,// Show filesystem labels
+    pub no_mtab: bool,// Don't write to /etc/mtab file
+    pub verbose: bool,// Display detailed operation information
+    pub help: bool,// Display help information
+    pub version: bool,// Display version information
 
-    // 挂载选项
+    // Mount options
     pub options: MountOptions,
 
-    // 源和目标
-    pub source: Option<Source>,//明确指定源(路径、标签、UUID)
-    pub target: Option<OsString>,//明确指定挂载点
-    pub target_prefix: Option<OsString>,//为所有挂载点指定路径前缀
+    // Source and target
+    pub source: Option<Source>,// Explicitly specify source (path, label, UUID)
+    pub target: Option<OsString>,// Explicitly specify mount point
+    pub target_prefix: Option<OsString>,// Specify path prefix for all mount points
 
-    // 命名空间
-    pub namespace: Option<OsString>,//在另一个命名空间中执行挂载
+    // Namespace
+    pub namespace: Option<OsString>,// Execute mount in another namespace
 
-    // 操作
+    // Operation
     pub operation: Operation,
 }
 
 #[derive(Debug, Default)]
 pub struct MountOptions {
-    pub mode: Option<OsString>,//指定如何处理从 fstab 加载的选项
-    pub source: Option<OsString>,//指定挂载选项的来源
-    pub source_force: bool,//强制使用来自 fstab/mtab 的选项
-    pub options: Option<OsString>,//指定以逗号分隔的挂载选项列表
-    pub test_opts: Option<OsString>,//限制文件系统集合(与 -a 选项一起使用)
-    pub read_only: bool,//以只读方式挂载文件系统
-    pub read_write: bool,//以读写方式挂载文件系统(默认)
-    pub types: Option<OsString>,//限制文件系统类型
+    pub mode: Option<OsString>,// Specify how to handle options loaded from fstab
+    pub source: Option<OsString>,// Specify source of mount options
+    pub source_force: bool,// Force use of options from fstab/mtab
+    pub options: Option<OsString>,// Specify comma-separated list of mount options
+    pub test_opts: Option<OsString>,// Limit set of filesystems (used with -a)
+    pub read_only: bool,// Mount filesystem read-only
+    pub read_write: bool,// Mount filesystem read-write (default)
+    pub types: Option<OsString>,// Limit filesystem types
 }
 
 #[derive(Debug)]
 pub enum Source {
-    Device(OsString),//通过设备路径指定
-    Label(OsString),//通过文件系统标签指定设备
-    UUID(OsString),//通过文件系统 UUID 指定设备
+    Device(OsString),// Specify by device path
+    Label(OsString),// Specify device by filesystem label
+    UUID(OsString),// Specify device by filesystem UUID
 }
 
 #[derive(Debug, Default,PartialEq)]
 pub enum Operation {
     #[default]
     Normal,
-    Bind,//将一个子树挂载到其他位置
-    Move,//将一个子树移动到其他位置
-    RBind,//挂载一个子树及其所有子挂载点到其他位置
-    MakeShared,//标记一个子树为共享
-    MakeSlave,//标记一个子树为从属
-    MakePrivate,//标记一个子树为私有
-    MakeUnbindable,//标记一个子树为不可绑定
-    MakeRShared,//递归地标记整个子树为共享
-    MakeRSlave,//递归地标记整个子树为从属
-    MakeRPrivate,//递归地标记整个子树为私有
-    MakeRUnbindable,//递归地标记整个子树为不可绑定
+    Bind,// Mount a subtree to another location
+    Move,// Move a subtree to another location
+    RBind,// Mount a subtree and all its submounts to another location
+    MakeShared,// Mark a subtree as shared
+    MakeSlave,// Mark a subtree as slave
+    MakePrivate,// Mark a subtree as private
+    MakeUnbindable,// Mark a subtree as unbindable
+    MakeRShared,// Recursively mark an entire subtree as shared
+    MakeRSlave,// Recursively mark an entire subtree as slave
+    MakeRPrivate,// Recursively mark an entire subtree as private
+    MakeRUnbindable,// Recursively mark an entire subtree as unbindable
 }
 
-
-///定义参数的值
 pub mod options{
     pub static ALL: &str = "all";                       // -a, --all
     ///
@@ -138,9 +135,9 @@ pub mod options{
     ///
     pub static UUID: &str = "uuid";                     // -U, --uuid
     ///
-    pub static DEVICE: &str = "device";                 // <设备>
+    pub static DEVICE: &str = "device";                 // <device>
 
-    // 操作
+    // operations
     ///
     pub static BIND: &str = "bind";                     // -B, --bind
     ///
@@ -201,7 +198,7 @@ impl Config {
                     Source::Device(dev) => match fs::canonicalize(&dev) {
                         Ok(path) => Some(Source::Device(path.into_os_string())),
                         Err(e) => {
-                            eprintln!("警告：无法规范化设备路径 {:?}: {}", dev, e);
+                            eprintln!("Warning: Unable to canonicalize device path {:?}: {}", dev, e);
                             Some(Source::Device(dev))
                         }
                     },
@@ -212,14 +209,14 @@ impl Config {
                     match fs::canonicalize(&t) {
                         Ok(path) => Some(path.into_os_string()),
                         Err(e) => {
-                            eprintln!("警告：无法规范化设备路径 {:?}: {}", t, e);
+                            eprintln!("Warning: Unable to canonicalize device path {:?}: {}", t, e);
                             Some(t)
                         }
                     }
                 })
             )
         } else {
-            // 如果指定了不规范化，则直接使用原始路径
+            // If no canonicalization is specified, use the original paths
             let source = if operation == Operation::Move {
                 options.value_of_os(options::DEVICE)
                     .map(|s| Source::Device(s.to_owned()))
@@ -306,7 +303,7 @@ impl Config {
 
 
 }
-///解析参数并填充Config结构体
+/// Parse arguments and populate Config struct
 pub fn parse_mount_cmd_args(args: impl uucore::Args, about: &str, usage: &str) -> UResult<Config> {
     let command = mount_app(about,usage);
     let args_list = args.collect_lossy();
@@ -315,7 +312,7 @@ pub fn parse_mount_cmd_args(args: impl uucore::Args, about: &str, usage: &str) -
         Err(e) => Err(uucore::error::USimpleError::new(BASE_CMD_PARSE_ERROR,e.to_string()))
     }
 }
-///定义命令行应用结构和参数，用uucore简化代码
+///// Define command line application structure and arguments, using uucore to simplify code
 pub fn mount_app<'a>(about: &'a str, usage: &'a str) -> Command<'a> {
     let mut cmd = Command::new(uucore::util_name())
         .version(crate_version!())
@@ -323,68 +320,62 @@ pub fn mount_app<'a>(about: &'a str, usage: &'a str) -> Command<'a> {
         .override_usage(format_usage(usage))
         .infer_long_args(true);
 
-    // 添加位置参数
-    cmd = cmd.arg(Arg::new(options::DEVICE).takes_value(true).help("按路径指定设备").index(1).allow_invalid_utf8(true))
-        .arg(Arg::new("target_positional").takes_value(true).help("指明挂载点").index(2).allow_invalid_utf8(true));
+    // Add positional arguments
+    cmd = cmd.arg(Arg::new(options::DEVICE).takes_value(true).help("Specify device by path").index(1).allow_invalid_utf8(true))
+        .arg(Arg::new("target_positional").takes_value(true).help("Specify mount point").index(2).allow_invalid_utf8(true));
 
-    // 添加布尔标志
+    // Add boolean flags
     for (name, short, help) in &[
-        (options::ALL, Some('a'), "挂载fstab中的所有文件系统"),
-        (options::NO_CANONICALIZE, Some('c'), "不对路径规范化"),
-        (options::FAKE, Some('f'), "空运行；跳过 mount(2) 系统调用"),
-        (options::FORK, Some('F'), "对每个设备禁用 fork(和 -a 选项一起使用)"),
-        (options::INTERNAL_ONLY, Some('i'), "不调用 mount.<type> 辅助程序"),
-        (options::SHOW_LABELS, Some('l'), "也显示文件系统标签"),
-        (options::NO_MTAB, Some('n'), "不写 /etc/mtab"),
-        (options::OPTIONS_SOURCE_FORCE, Some('\0'), "force use of options from fstab/mtab"),
-        (options::READ_ONLY, Some('r'), "以只读方式挂载文件系统(同 -o ro)"),
-        (options::VERBOSE, Some('v'), "打印当前进行的操作"),
-        (options::READ_WRITE, Some('w'), "以读写方式挂载文件系统(默认)"),
-        (options::HELP, Some('h'), "display this help"),
-        (options::VERSION, Some('V'), "display version"),
+        (options::ALL, Some('a'), "Mount all filesystems mentioned in fstab"),
+        (options::NO_CANONICALIZE, Some('c'), "Don't canonicalize paths"),
+        (options::FAKE, Some('f'), "Dry run; skip the mount(2) system call"),
+        (options::FORK, Some('F'), "Fork for each device (use with -a option)"),
+        (options::INTERNAL_ONLY, Some('i'), "Don't call the mount.<type> helper program"),
+        (options::SHOW_LABELS, Some('l'), "Also show filesystem labels"),
+        (options::NO_MTAB, Some('n'), "Don't write to /etc/mtab"),
+        (options::OPTIONS_SOURCE_FORCE, Some('\0'), "Force use of options from fstab/mtab"),
+        (options::READ_ONLY, Some('r'), "Mount filesystem read-only (same as -o ro)"),
+        (options::VERBOSE, Some('v'), "Print current operations"),
+        (options::READ_WRITE, Some('w'), "Mount filesystem read-write (default)"),
+        (options::HELP, Some('h'), "Display this help"),
+        (options::VERSION, Some('V'), "Display version"),
     ] {
         let arg = Arg::new(*name).long(*name).help(*help).global(true);
         cmd = cmd.arg(if let Some(s) = short { arg.short(*s) } else { arg });
     }
-
-    // 添加带值的选项
     for (name, short, help) in &[
-        (options::FSTAB, Some('T'), "/etc/fstab 的替代文件"),
-        (options::OPTIONS_MODE, None, "what to do with options loaded from fstab"),
-        (options::OPTIONS_SOURCE, None, "mount options source"),
-        (options::OPTIONS, Some('o'), "挂载选项列表，以英文逗号分隔"),
-        (options::TEST_OPTS, Some('O'), "限制文件系统集合(和 -a 选项一起使用)"),
-        (options::TYPES, Some('t'), "限制文件系统类型集合"),
-        (options::SOURCE, None, "指明源(路径、标签、uuid)"),
-        (options::TARGET, None, "指明挂载点"),
-        (options::TARGET_PREFIX, None, "specifies path used for all mountpoints"),
-        (options::NAMESPACE, Some('N'), "perform mount in another namespace"),
-        (options::LABEL, Some('L'), "synonym for LABEL=<label>"),
-        (options::UUID, Some('U'), "synonym for UUID=<uuid>"),
+        (options::FSTAB, Some('T'), "Alternative file to /etc/fstab"),
+        (options::OPTIONS_MODE, None, "How to handle options loaded from fstab"),
+        (options::OPTIONS_SOURCE, None, "Mount options source"),
+        (options::OPTIONS, Some('o'), "Comma-separated list of mount options"),
+        (options::TEST_OPTS, Some('O'), "Limit set of filesystems (use with -a option)"),
+        (options::TYPES, Some('t'), "Limit the set of filesystem types"),
+        (options::SOURCE, None, "Specify source (path, label, uuid)"),
+        (options::TARGET, None, "Specify mount point"),
+        (options::TARGET_PREFIX, None, "Specify path used for all mountpoints"),
+        (options::NAMESPACE, Some('N'), "Perform mount in another namespace"),
+        (options::LABEL, Some('L'), "Synonym for LABEL=<label>"),
+        (options::UUID, Some('U'), "Synonym for UUID=<uuid>"),
     ] {
         let arg = Arg::new(*name).long(*name).help(*help).takes_value(true).allow_invalid_utf8(true);
         cmd = cmd.arg(if let Some(s) = short { arg.short(*s) } else { arg });
     }
-
-    // 添加操作选项
     for (name, short, help) in &[
-        (options::BIND, Some('B'), "挂载其他位置的子树(同 -o bind)"),
-        (options::MOVE, Some('M'), "将子树移动到其他位置"),
-        (options::RBIND, Some('R'), "挂载其他位置的子树及其包含的所有子挂载(submount)"),
-        (options::MAKE_SHARED, None, "将子树标记为 共享"),
-        (options::MAKE_SLAVE, None, "将子树标记为 从属"),
-        (options::MAKE_PRIVATE, None, "将子树标记为 私有"),
-        (options::MAKE_UNBINDABLE,None, "将子树标记为 不可绑定"),
-        (options::MAKE_RSHARED, None, "递归地将整个子树标记为 共享"),
-        (options::MAKE_RSLAVE, None, "递归地将整个子树标记为 从属"),
-        (options::MAKE_RPRIVATE, None, "递归地将整个子树标记为 私有"),
-        (options::MAKE_RUNBINDABLE, None, "递归地将整个子树标记为 不可绑定"),
+        (options::BIND, Some('B'), "Mount a subtree somewhere else (same as -o bind)"),
+        (options::MOVE, Some('M'), "Move a subtree to some other place"),
+        (options::RBIND, Some('R'), "Mount a subtree and all submounts somewhere else"),
+        (options::MAKE_SHARED, None, "Mark a subtree as shared"),
+        (options::MAKE_SLAVE, None, "Mark a subtree as slave"),
+        (options::MAKE_PRIVATE, None, "Mark a subtree as private"),
+        (options::MAKE_UNBINDABLE, None, "Mark a subtree as unbindable"),
+        (options::MAKE_RSHARED, None, "Recursively mark an entire subtree as shared"),
+        (options::MAKE_RSLAVE, None, "Recursively mark an entire subtree as slave"),
+        (options::MAKE_RPRIVATE, None, "Recursively mark an entire subtree as private"),
+        (options::MAKE_RUNBINDABLE, None, "Recursively mark an entire subtree as unbindable"),
     ] {
         let arg = Arg::new(*name).long(*name).help(*help);
         cmd = cmd.arg(if let Some(s) = short { arg.short(*s) } else { arg });
     }
-
-    // 添加参数组
     cmd = cmd.group(ArgGroup::new("operation")
         .args(&[options::BIND, options::MOVE, options::RBIND, options::MAKE_SHARED, options::MAKE_SLAVE, options::MAKE_PRIVATE,
             options::MAKE_UNBINDABLE, options::MAKE_RSHARED, options::MAKE_RSLAVE, options::MAKE_RPRIVATE, options::MAKE_RUNBINDABLE])
@@ -516,7 +507,7 @@ impl ConfigHandler{
             Operation::Normal => self.perform_normal_mount()?,
             Operation::Bind => self.perform_bind_mount()?,
             Operation::Move => self.perform_move_mount()?,
-            // Operation::RBind => self.perform_rbind_mount()?,//递归绑定挂载在绑定挂载中实现了
+            // Operation::RBind => self.perform_rbind_mount()?,
             Operation::RBind => self.perform_bind_mount()?,
             Operation::MakeShared => self.make_mount_shared()?,
             Operation::MakeSlave => self.make_mount_slave()?,
@@ -529,7 +520,7 @@ impl ConfigHandler{
         }
         Ok(())
     }
-    // 辅助方法
+    // Ancillary methods
     fn verbose_print(&self, message: &str) {
         if self.config.verbose {
             println!("VERBOSE: {}", message);
@@ -545,9 +536,9 @@ impl ConfigHandler{
         }
 
         self.verbose_print("Updating /etc/mtab");
-        // 这里应该实现更新 /etc/mtab 的逻辑
-        // 注意：在现代系统中，这通常不是必要的，因为 /etc/mtab 通常是 /proc/self/mounts 的符号链接
-        // 但是为了完整性，我们可以添加一个模拟的更新操作
+        // Here we should implement the logic to update /etc/mtab
+        // Note: In modern systems, this is often not necessary as /etc/mtab is usually a symlink to /proc/self/mounts
+        // But for completeness, we can add a simulated update operation
         self.verbose_print(&format!("Would update /etc/mtab with: {} {} {} {}", source, target, fstype, options));
 
         Ok(())
@@ -556,7 +547,7 @@ impl ConfigHandler{
         self.verbose_print("Mounting all filesystems from /etc/fstab");
         let fstab_path = "/etc/fstab";
         let fstab_file = parse_fstab(fstab_path).unwrap();
-        // 实现挂载所有文件系统的逻辑
+        // Implement logic to mount all filesystems
         for line_vec in fstab_file{
             let mut source = &line_vec[0];
             let mount_source = Some(prepare_mount_source(source.as_str()).unwrap());
@@ -564,16 +555,6 @@ impl ConfigHandler{
             let fstype = line_vec[2].as_str().clone();
             let flags = MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID;
             let fstab_options = &line_vec[3];
-            // if is_already_mounted(target).unwrap(){
-            //     println!("文件系统路径：{}已经挂载过了！跳过！", target);
-            //     continue
-            // }
-            // if is_swapfile(fstype){
-            //     println!("跳过挂载交换文件!: {}，请用swapon挂载交换文件！",source);
-            //     continue
-            // }
-            // mount_fs(mount_source.as_ref(), &target, Some(fstype), flags, data).expect("Mount failed!");
-            // println!("Mount successful!");
             if let Some(test_opts) = &self.config.options.test_opts {
                 if !self.match_test_opts(fstab_options, test_opts) {
                     self.verbose_print(&format!("Skipping mount of {} due to test_opts", target));
@@ -583,11 +564,11 @@ impl ConfigHandler{
             if self.should_fork(){
                 match unsafe{fork()} {
                     Ok(ForkResult::Parent {child}) => {
-                        // 父进程
+                        // Parent process
                         println!("Forked child with PID: {}", child);
                     },
                     Ok(ForkResult::Child) => {
-                        // 子进程
+                        // Child process
                         if let Err(e) = self.mount_single_filesystem(source, target, fstype) {
                             eprintln!("Failed to mount {}: {}", source, e);
                             exit(1);
@@ -603,7 +584,7 @@ impl ConfigHandler{
             }
         }
         if self.should_fork() {
-            // 等待所有子进程完成
+            // Wait for all child processes to complete
             use nix::sys::wait::{waitpid, WaitStatus};
             use nix::unistd::Pid;
 
@@ -633,11 +614,11 @@ impl ConfigHandler{
         let data = None;
         let interal_only = self.use_internal_only();
         if is_already_mounted(target).unwrap() {
-            println!("文件系统路径：{}已经挂载过了！跳过！", target);
+            println!("Filesystem path: {} is already mounted! Skipping!", target);
             return Ok(());
         }
         if is_swapfile(fstype) {
-            println!("跳过挂载交换文件!: {}，请用swapon挂载交换文件！", source);
+            println!("Skipping mounting swap file!: {}, please use swapon to mount swap files!", source);
             return Ok(());
         }
 
@@ -652,24 +633,24 @@ impl ConfigHandler{
         Ok(())
     }
     fn use_alternative_fstab(&self, fstab: &OsString) -> Result<(), Box<dyn std::error::Error>> {
-        self.verbose_print(&format!("使用替代 fstab: {:?}", fstab));
+        self.verbose_print(&format!("Using alternative fstab: {:?}", fstab));
         let fstab_path = fstab.to_str().ok_or_else(|| io::Error::new(
             io::ErrorKind::InvalidInput,
-            "无效的 fstab 路径".to_string()
+            "Invalid fstab path".to_string()
         ))?;
         let path = Path::new(fstab_path);
         if path.is_dir() {
             return Err(Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                format!("{:?} 是一个目录。请指定一个文件。", path)
+                format!("{:?} is a directory. Please specify a file.", path)
             )));
         }
 
-        // 读取并解析替代的 fstab 文件
+        // Read and parse the alternative fstab file
         match parse_fstab(fstab_path) {
             Ok(fstab_entries) => {
                 for entry in fstab_entries {
-                    // 对每个 fstab 条目执行挂载操作
+                    //  Perform mount operation for each fstab entry
                     let source = &entry[0];
                     let mount_source = prepare_mount_source(source)
                         .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
@@ -684,7 +665,7 @@ impl ConfigHandler{
     }
     fn perform_normal_mount(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.verbose_print("Performing normal mount");
-        // 实现正常挂载的逻辑
+        // Implement the logic of a normal mount
         let mount_source = match &self.config.source {
             Some(Source::Device(dev)) => dev.to_str()
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid device path"))?.to_string(),
@@ -740,19 +721,19 @@ impl ConfigHandler{
                 let source = prepare_mount_source(&mount_source).unwrap();
                 if self.config.show_labels {
                     if let Some(label) = self.get_filesystem_label(&source)? {
-                        println!("挂载文件系统，标签: {}", label);
+                        println!("Mounting filesystem, label:  {}", label);
                     }
                 }
                 mount_fs(Some(&source), &target.to_string(), Some(fstype.clone().unwrap().as_str()), flags, data,interal_only).map_err(|e| {
-                    eprintln!("挂载失败: {:?}", e);
-                    eprintln!("源: {:?}, 目标: {}, 文件系统类型: {:?}, 标志: {:?}, 选项: {:?}",
+                    eprintln!("Mount failed:{:?}", e);
+                    eprintln!("Source: {:?}, Target: {}, Filesystem type: {:?}, Flags: {:?}, Options: {:?}",
                               source, target, fstype, flags, options);
                     e
                 })?;
                 self.update_mtab(&source, target, fstype.unwrap().as_str(), "")?;
                 self.verbose_print("Mount operation completed");
             } else {
-                println!("已经挂载过！");
+                println!("Already mounted!");
             }
         }
         Ok(())
@@ -831,7 +812,7 @@ impl ConfigHandler{
 
             let ns_file = File::open(ns)?;
 
-            // 使用 scopeguard 来确保文件描述符被正确关闭
+            // Use scopeguard to ensure the file descriptor is properly closed
             let _guard = scopeguard::guard(ns_file, |f| drop(f));
 
             unsafe {
@@ -845,21 +826,21 @@ impl ConfigHandler{
     }
     fn perform_bind_mount(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.verbose_print("Performing bind mount");
-        // 实现绑定挂载的逻辑
-        // 获取源路径
+        // Implement bind mount logic
+        // Get source path
         let source = match &self.config.source {
             Some(Source::Device(dev)) => dev.to_str()
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid source path"))?,
             _ => return Err(Box::new(io::Error::new(io::ErrorKind::InvalidInput, "Bind mount requires a source path"))),
         };
 
-        // 获取目标路径
+        // Get target path
         let target = self.config.target.as_ref()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "No target specified"))?
             .to_str()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid target path"))?;
 
-        // 检查源路径和目标路径是否存在
+        // Check if source and target paths exist
         if !Path::new(source).exists() {
             return Err(Box::new(io::Error::new(io::ErrorKind::NotFound, format!("Source path does not exist: {}", source))));
         }
@@ -867,24 +848,24 @@ impl ConfigHandler{
             return Err(Box::new(io::Error::new(io::ErrorKind::NotFound, format!("Target path does not exist: {}", target))));
         }
 
-        // 设置绑定挂载的标志
+        // Set bind mount flags
         let mut flags = MsFlags::MS_BIND;
 
-        // 如果需要递归绑定挂载（rbind），添加 MS_REC 标志
+        // If recursive bind mount (rbind) is needed, add MS_REC flag
         if self.config.operation == Operation::RBind {
             flags |= MsFlags::MS_REC;
         }
 
-        // 执行绑定挂载
+        // Perform bind mount
         if self.is_fake_mode() {
             self.verbose_print(&format!("FAKE: Would bind mount {} to {}", source, target));
         } else {
             mount_fs(
                 Some(&source.to_string()),
                 &target.to_string(),
-                None, // 绑定挂载不需要指定文件系统类型
+                None, // Bind mount doesn't require filesystem type
                 flags,
-                None, // 绑定挂载不需要额外的数据
+                None, // Bind mount doesn't need extra data
                 self.use_internal_only()
             )?;
             self.verbose_print(&format!("Successfully bind mounted {} to {}", source, target));
@@ -893,97 +874,97 @@ impl ConfigHandler{
     }
 
     fn perform_move_mount(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.verbose_print("执行移动挂载操作");
-        // 获取源路径
+        self.verbose_print("Performing move mount operation");
+        // Get source path
         let source = match &self.config.source {
-            Some(Source::Device(dev)) => dev.to_str().ok_or("源设备路径包含无效的UTF-8字符")?,
-            Some(Source::Label(_)) | Some(Source::UUID(_)) => return Err("移动操作不支持使用标签或UUID".into()),
-            None => return Err("移动操作需要指定源挂载点".into()),
+            Some(Source::Device(dev)) => dev.to_str().ok_or("Source device path contains invalid UTF-8 characters")?,
+            Some(Source::Label(_)) | Some(Source::UUID(_)) => return Err("Move operation doesn't support using labels or UUIDs".into()),
+            None => return Err("Move operation requires specifying a source mount point".into()),
         };
 
-        // 获取目标路径
+        // Get target path
         let target = self.config.target.as_ref()
-            .ok_or("移动操作需要指定目标挂载点")?
+            .ok_or("Move operation requires specifying a target mount point")?
             .to_str()
-            .ok_or("目标路径包含无效的UTF-8字符")?;
+            .ok_or("Target path contains invalid UTF-8 characters")?;
 
-        // 检查源路径和目标路径是否存在
+        // Check if source and target paths exist
         if !Path::new(source).exists() {
-            return Err(format!("源路径不存在: {}", source).into());
+            return Err(format!("Source path does not exist: {}", source).into());
         }
         if !Path::new(target).exists() {
-            return Err(format!("目标路径不存在: {}", target).into());
+            return Err(format!("Target path does not exist: {}", target).into());
         }
 
-        // 检查源路径是否是一个挂载点
+        // Check if the source path is a mount point
         if !is_mount_point(source) {
-            return Err(format!("源路径不是一个挂载点: {}", source).into());
+            return Err(format!("Source path is not a mount point: {}", source).into());
         }
         let interal_only = self.config.internal_only;
-        // 执行移动挂载操作
+        // Perform move mount operation
         match mount_fs(Some(&source.to_string()), &target.to_string(), None, MsFlags::MS_MOVE, None, interal_only) {
             Ok(_) => {
-                self.verbose_print(&format!("成功将挂载点从 {} 移动到 {}", source, target));
+                self.verbose_print(&format!("Successfully moved mount point from {} to {}", source, target));
                 Ok(())
             },
             Err(e) => {
-                Err(format!("移动挂载失败: {} -> {}, 错误: {}", source, target, e).into())
+                Err(format!("Move mount failed: {} -> {}, Error: {}", source, target, e).into())
             }
         }
     }
 
     fn perform_rbind_mount(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.verbose_print("Performing rbind mount");
-        // 实现递归绑定挂载的逻辑
-        //在rbind实现了
+        // Implement the logic of recursive binding mounting
+        //Implemented in rbind
         Ok(())
     }
 
     fn make_mount_shared(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.verbose_print("Making mount shared");
-        // 实现设置共享挂载的逻辑
+        // Implement logic for setting shared mount
         self.change_mount_propagation(MsFlags::MS_SHARED, false, "shared")
     }
 
     fn make_mount_slave(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.verbose_print("Making mount slave");
-        // 实现设置从属挂载的逻辑
+        // Implement logic for setting slave mount
         self.change_mount_propagation(MsFlags::MS_SLAVE, false, "slave")
     }
 
     fn make_mount_private(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.verbose_print("Making mount private");
-        // 实现设置私有挂载的逻辑
+        // Implement logic for setting private mount
         self.change_mount_propagation(MsFlags::MS_PRIVATE, false, "private")
     }
 
     fn make_mount_unbindable(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.verbose_print("Making mount unbindable");
-        // 实现设置不可绑定挂载的逻辑
+        // Implement logic for setting unbindable mount
         self.change_mount_propagation(MsFlags::MS_UNBINDABLE, false, "unbindable")
     }
 
     fn make_mount_rshared(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.verbose_print("Making mount recursively shared");
-        // 实现设置递归共享挂载的逻辑
+        // Implement logic for setting recursive shared mount
         self.change_mount_propagation(MsFlags::MS_SHARED, true, "recursively shared")
     }
 
     fn make_mount_rslave(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.verbose_print("Making mount recursively slave");
-        // 实现设置递归从属挂载的逻辑
+        // Implement logic for setting recursive slave mount
         self.change_mount_propagation(MsFlags::MS_SLAVE, true, "recursively slave")
     }
 
     fn make_mount_rprivate(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.verbose_print("Making mount recursively private");
-        // 实现设置递归私有挂载的逻辑
+        // Implement logic for setting recursive private mount
         self.change_mount_propagation(MsFlags::MS_PRIVATE, true, "recursively private")
     }
 
     fn make_mount_runbindable(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.verbose_print("Making mount recursively unbindable");
-        // 实现设置递归不可绑定挂载的逻辑
+        // Implement logic for setting recursive unbindable mount
         self.change_mount_propagation(MsFlags::MS_UNBINDABLE, true, "recursively unbindable")
     }
 

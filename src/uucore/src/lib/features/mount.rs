@@ -19,14 +19,14 @@ pub fn mount_fs<p: AsRef<Path>>(
 ) -> nix::Result<()> {
     let result =  mount(source.map(|s| s.as_ref()), target.as_ref(), fs_type, flags, data);
     if internal_only{
-        // 如果指定了 internal_only，我们只返回内核挂载的结果
+        // If internal_only is specified, we only return the result of the kernel mount
         result
     }else {
         match result {
-            Ok(_) => Ok(()), // 内部挂载成功
+            Ok(_) => Ok(()), /// Internal mount successful
             Err(e) => {
                 eprintln!("Internal mount failed: {}. Attempting external mount...", e);
-                // 尝试外部挂载
+                // Attempt external mount
                 external_mount(source, target, fs_type, flags, data)
             }
         }
@@ -51,7 +51,7 @@ fn external_mount<P: AsRef<Path>>(
         cmd.args(&["-t", fs]);
     }
 
-    // 将 flags 转换为命令行选项
+    // Convert flags to command line options
     if flags.contains(MsFlags::MS_RDONLY) {
         cmd.arg("-r");
     }
@@ -64,7 +64,7 @@ fn external_mount<P: AsRef<Path>>(
     if flags.contains(MsFlags::MS_NOEXEC) {
         cmd.arg("-o").arg("noexec");
     }
-    // 可以根据需要添加更多的 flags 转换
+    // Add more flag conversions as needed
 
     if let Some(d) = data {
         cmd.arg("-o").arg(d);
@@ -78,30 +78,30 @@ fn external_mount<P: AsRef<Path>>(
 }
 pub fn prepare_mount_source(source: &str)->UResult<String>{
     if !Uid::effective().is_root() {
-        return Err(USimpleError::new(1, "需要 root 权限来挂载设备"));
+        return Err(USimpleError::new(1, "Root privileges are required to mount devices"));
     }
     let metadata = std::fs::metadata(source)
-        .map_err(|e| USimpleError::new(1, format!("无法获取源文件信息: {}", e)))?;
+        .map_err(|e| USimpleError::new(1, format!("Unable to get source file information: {}", e)))?;
     if metadata.file_type().is_block_device(){
-        //块设备直接返回
+        // Return block device directly
         Ok(source.to_string())
     }else {
-        //为普通文件创建循环设备
+        // Create loop device for regular files
         let output = std::process::Command::new("losetup")
-            .arg("-f").arg("--show").arg(source).output().map_err(|e| USimpleError::new(1, format!("创建循环设备失败: {}", e)))?;
+            .arg("-f").arg("--show").arg(source).output().map_err(|e| USimpleError::new(1, format!("Failed to create loop device: {}", e)))?;
         if !output.status.success() {
             Err(USimpleError::new(1, format!(
-                "创建循环设备失败: {}",
+                "Failed to create loop device: {}",
                 String::from_utf8_lossy(&output.stderr)).to_string()))
         }else {
             String::from_utf8(output.stdout)
-                .map_err(|e| USimpleError::new(1, format!("解析循环设备路径失败: {}", e)))
+                .map_err(|e| USimpleError::new(1, format!("Failed to parse loop device path: {}", e)))
                 .map(|s| s.trim().to_string())
         }
     }
 }
 pub fn is_already_mounted(target: &str) -> Result<bool, Box<dyn std::error::Error>> {
-    /*读取/proc/mounts来获取已挂载的设备挂载点，判断是否已挂载*/
+    /* Read /proc/mounts to get mounted device mount points, determine if already mounted */
     let file = File::open("/proc/mounts")?;
     let reader = BufReader::new(file);
     let re = Regex::new(r"^\S+\s+(\S+)")?;
@@ -126,7 +126,7 @@ pub fn parse_mount_options(options: &str) -> MsFlags {
     //     // match option {
     //     //     "noexec" => flags |= MsFlags::MS_NOEXEC,
     //     //     "nosuid" => flags |= MsFlags::MS_NOSUID,
-    //     //     // 添加其他选项...
+    //     //     // Add other options...
     //     //     _ => {}
     //     // }
     // }
@@ -134,30 +134,30 @@ pub fn parse_mount_options(options: &str) -> MsFlags {
 }
 pub fn parse_fstab(path: &str) -> Result<Vec<Vec<String>>, Box<dyn std::error::Error>> {
     let path = Path::new(path);
-    let file = File::open(path).map_err(|e| format!("打开 fstab 文件失败: {}", e))?;
+    let file = File::open(path).map_err(|e| format!("Failed to open fstab file: {}", e))?;
     let reader = BufReader::new(file);
     let re = Regex::new(r"^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)\s+(\d+)").unwrap();
 
     let mut fstab_vec = Vec::new();
 
     for (index, line) in reader.lines().enumerate() {
-        let line = line.map_err(|e| format!("读取第 {} 行时出错: {}", index + 1, e))?;
+        let line = line.map_err(|e| format!("Error reading line {}: {}", index + 1, e))?;
         let trimmed = line.trim();
         if trimmed.starts_with('#') || trimmed.is_empty() {
-            continue;  // 跳过注释和空行
+            continue;  // Skip comments and empty lines
         }
         if let Some(caps) = re.captures(trimmed) {
             let line_vec: Vec<String> = (1..=6).map(|i| caps[i].to_string()).collect();
             fstab_vec.push(line_vec);
         } else {
-            eprintln!("警告: 第 {} 行不符合预期格式: {}", index + 1, trimmed);
+            eprintln!("Warning: Line {} does not match expected format: {}", index + 1, trimmed);
         }
     }
 
     if fstab_vec.is_empty() {
         Err(Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            "fstab 文件中没有找到有效条目"
+            "No valid entries found in fstab file"
         )))
     } else {
         Ok(fstab_vec)
@@ -184,14 +184,14 @@ pub fn find_device_by_uuid(uuid: &str) -> Result<String,Box<dyn std::error::Erro
 
     if output.status.success() {
         let device = String::from_utf8(output.stdout)?.trim().to_string();
-        println!("uuid 解析成功！");
+        println!("UUID parsed successfully!");
         Ok(device)
     }else {
         Err(io::Error::new(io::ErrorKind::NotFound, "Not found device by uuid").into())
     }
 
 }
-//检查路径是否是挂载点
+// Check if the path is a mount point
 pub fn is_mount_point(path: &str) -> bool {
     let file = match File::open("/proc/mounts") {
         Ok(f) => f,

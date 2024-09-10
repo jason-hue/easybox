@@ -3,12 +3,12 @@
 ## Usage
 ```
 mount [-lhV] 
-mount -a [选项] 
-mount [选项] [--source] <源> | [--target] <目录> 
-mount [选项] <源> <目录> 
-mount <操作> <挂载点> [<目标>]```
+mount -a [options] 
+mount [options] [--source] <source> | [--target] <directory> 
+mount [options] <source> <directory> 
+mount <operation> <mountPoint> [<target>]```
 ```
 
 ## About
 
-挂载文件系统
+Mount the file system

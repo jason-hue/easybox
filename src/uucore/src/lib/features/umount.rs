@@ -25,14 +25,14 @@ pub fn umount_fs<p: AsRef<Path>>(target: p, flags: MntFlags, internal_only: bool
 fn internal_umount<p: AsRef<Path>>(target: &p, flags: MntFlags) -> nix::Result<()> {
     let mut cmd = std::process::Command::new("umount");
 
-    // 添加 flags
+    // Add flags
     if flags.contains(MntFlags::MNT_FORCE) {
         cmd.arg("-f");
     }
     if flags.contains(MntFlags::MNT_DETACH) {
         cmd.arg("-l");
     }
-    // 可以根据需要添加更多的 flags 转换
+    // More flag conversions can be added as needed
 
     cmd.arg(target.as_ref());
 
@@ -44,7 +44,7 @@ fn internal_umount<p: AsRef<Path>>(target: &p, flags: MntFlags) -> nix::Result<(
 }
 pub fn prepare_umount_target(target: &str)->UResult<String>{
     if !Uid::effective().is_root() {
-        return Err(USimpleError::new(1, "需要 root 权限来挂载设备"));
+        return Err(USimpleError::new(1, "Root privileges are required to unmount devices"));
     }else {
         Ok("".to_string())
     }
