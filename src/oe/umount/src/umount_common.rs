@@ -13,10 +13,11 @@ use std::sync::Mutex;
 use uucore::error::{UResult, USimpleError};
 use uucore::format_usage;
 use uucore::umount::umount_fs;
-
+///
 pub static BASE_CMD_PARSE_ERROR: i32 = 1;
 
 #[derive(Debug, Default)]
+///
 pub struct Config {
     pub all: bool,
     pub all_targets: bool,
@@ -40,29 +41,48 @@ pub struct Config {
 
     pub target: Option<OsString>,
 }
-
+///
 pub mod options {
+    ///
     pub static ALL: &str = "all";
+    ///
     pub static ALL_TARGETS: &str = "all-targets";
+    ///
     pub static NO_CANONICALIZE: &str = "no-canonicalize";
+    ///
     pub static DETACH_LOOP: &str = "detach-loop";
+    ///
     pub static FAKE: &str = "fake";
+    ///
     pub static FORCE: &str = "force";
+    ///
     pub static INTERNAL_ONLY: &str = "internal-only";
+    ///
     pub static NO_MTAB: &str = "no-mtab";
+    ///
     pub static LAZY: &str = "lazy";
+    ///
     pub static TEST_OPTS: &str = "test-opts";
+    ///
     pub static RECURSIVE: &str = "recursive";
+    ///
     pub static READ_ONLY: &str = "read-only";
+    ///
     pub static TYPES: &str = "types";
+    ///
     pub static VERBOSE: &str = "verbose";
+    ///
     pub static QUIET: &str = "quiet";
+    ///
     pub static NAMESPACE: &str = "namespace";
+    ///
     pub static HELP: &str = "help";
+    ///
     pub static VERSION: &str = "version";
 }
 
 impl Config {
+    ///
     pub fn from(options: &clap::ArgMatches) -> UResult<Self> {
         Ok(Self {
             all: options.is_present(options::ALL),
@@ -89,7 +109,7 @@ impl Config {
         })
     }
 }
-
+///
 pub fn parse_umount_cmd_args(args: impl uucore::Args, about: &str, usage: &str) -> UResult<Config> {
     let command = umount_app(about, usage);
     let args_list = args.collect_lossy();
@@ -98,7 +118,7 @@ pub fn parse_umount_cmd_args(args: impl uucore::Args, about: &str, usage: &str) 
         Err(e) => Err(USimpleError::new(BASE_CMD_PARSE_ERROR, e.to_string())),
     }
 }
-
+///
 pub fn umount_app<'a>(about: &'a str, usage: &'a str) -> Command<'a> {
     let mut cmd = Command::new(uucore::util_name())
         .version(crate_version!())
@@ -213,17 +233,18 @@ pub fn umount_app<'a>(about: &'a str, usage: &'a str) -> Command<'a> {
 
     cmd
 }
-
+///
 pub struct UmountHandler {
     config: Config,
 }
 static MTAB_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 impl UmountHandler {
+    ///
     pub fn new(config: Config) -> UmountHandler {
         Self { config }
     }
-
+    ///
     pub fn process(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.handle_namespace()?;
         self.handle_basic_options()?;

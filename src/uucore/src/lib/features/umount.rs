@@ -3,7 +3,7 @@ use nix::errno::Errno;
 use nix::mount::{umount, umount2, MntFlags};
 use nix::unistd::Uid;
 use std::path::Path;
-
+///
 pub fn umount_fs<P: AsRef<Path>>(
     target: P,
     flags: MntFlags,
@@ -47,6 +47,7 @@ fn internal_umount<P: AsRef<Path>>(target: &P, flags: MntFlags) -> nix::Result<(
         Err(e) => Err(Errno::from_i32(e.raw_os_error().unwrap_or(1))),
     }
 }
+///
 pub fn prepare_umount_target(_target: &str) -> UResult<String> {
     if !Uid::effective().is_root() {
         return Err(USimpleError::new(

@@ -13,6 +13,7 @@ const ABOUT: &str = help_section!("about", "umount.md");
 const USAGE: &str = help_usage!("umount.md");
 
 #[uucore::main]
+///
 pub fn oemain(args: impl uucore::Args) -> UResult<()> {
     let config: Config = parse_umount_cmd_args(args, ABOUT, USAGE)?;
     let umount_handler = UmountHandler::new(config);
@@ -36,6 +37,8 @@ pub fn oemain(args: impl uucore::Args) -> UResult<()> {
 /// # Returns
 ///
 /// Returns a `Command` struct that represents the CLI for the umount utility.
+
+///
 pub fn oe_app<'a>() -> Command<'a> {
     umount_app(ABOUT, USAGE)
 }

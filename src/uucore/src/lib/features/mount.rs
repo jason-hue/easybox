@@ -8,6 +8,7 @@ use std::io;
 use std::io::{BufRead, BufReader};
 use std::os::unix::fs::FileTypeExt;
 use std::path::Path;
+///
 pub fn mount_fs<P: AsRef<Path>>(
     source: Option<&P>,
     target: &P,
@@ -82,6 +83,7 @@ fn external_mount<P: AsRef<Path>>(
         Err(e) => Err(Errno::from_i32(e.raw_os_error().unwrap_or(1))),
     }
 }
+///
 pub fn prepare_mount_source(source: &str) -> UResult<String> {
     if !Uid::effective().is_root() {
         return Err(USimpleError::new(
@@ -121,6 +123,7 @@ pub fn prepare_mount_source(source: &str) -> UResult<String> {
         }
     }
 }
+///
 pub fn is_already_mounted(target: &str) -> Result<bool, Box<dyn std::error::Error>> {
     /* Read /proc/mounts to get mounted device mount points, determine if already mounted */
     let file = File::open("/proc/mounts")?;
@@ -138,9 +141,11 @@ pub fn is_already_mounted(target: &str) -> Result<bool, Box<dyn std::error::Erro
     }
     Ok(false)
 }
+///
 pub fn is_swapfile(fstype: &str) -> bool {
     fstype == "swap"
 }
+///
 pub fn parse_mount_options(_options: &str) -> MsFlags {
     let flags = MsFlags::empty();
     // for option in options.split(',') {
@@ -153,6 +158,7 @@ pub fn parse_mount_options(_options: &str) -> MsFlags {
     // }
     flags
 }
+///
 pub fn parse_fstab(path: &str) -> Result<Vec<Vec<String>>, Box<dyn std::error::Error>> {
     let path = Path::new(path);
     let file = File::open(path).map_err(|e| format!("Failed to open fstab file: {}", e))?;
@@ -188,6 +194,7 @@ pub fn parse_fstab(path: &str) -> Result<Vec<Vec<String>>, Box<dyn std::error::E
         Ok(fstab_vec)
     }
 }
+///
 pub fn find_device_by_label(label: &str) -> Result<String, Box<dyn std::error::Error>> {
     let output = std::process::Command::new("blkid")
         .arg("-L")
@@ -201,6 +208,7 @@ pub fn find_device_by_label(label: &str) -> Result<String, Box<dyn std::error::E
         Err(io::Error::new(io::ErrorKind::NotFound, "Not found device by label").into())
     }
 }
+///
 pub fn find_device_by_uuid(uuid: &str) -> Result<String, Box<dyn std::error::Error>> {
     let output = std::process::Command::new("blkid")
         .arg("-U")
@@ -215,7 +223,7 @@ pub fn find_device_by_uuid(uuid: &str) -> Result<String, Box<dyn std::error::Err
         Err(io::Error::new(io::ErrorKind::NotFound, "Not found device by uuid").into())
     }
 }
-// Check if the path is a mount point
+///Check if the path is a mount point
 pub fn is_mount_point(path: &str) -> bool {
     let file = match File::open("/proc/mounts") {
         Ok(f) => f,

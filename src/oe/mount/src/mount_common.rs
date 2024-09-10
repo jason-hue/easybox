@@ -16,52 +16,71 @@ use uucore::mount::{
     find_device_by_label, find_device_by_uuid, is_already_mounted, is_mount_point, is_swapfile,
     mount_fs, parse_fstab, prepare_mount_source,
 };
-
+///
 pub static BASE_CMD_PARSE_ERROR: i32 = 1;
 
 #[derive(Debug, Default)]
+///
 pub struct Config {
     // Basic options
-    pub all: bool,               // Mount all filesystems mentioned in /etc/fstab
-    pub no_canonicalize: bool,   // Don't canonicalize paths
-    pub fake: bool,              // Simulate mounting, don't actually call mount system call
-    pub fork: bool,              // Fork for each device (used with -a)
+    ///
+    pub all: bool, // Mount all filesystems mentioned in /etc/fstab
+    ///
+    pub no_canonicalize: bool, // Don't canonicalize paths
+    ///
+    pub fake: bool, // Simulate mounting, don't actually call mount system call
+    ///
+    pub fork: bool, // Fork for each device (used with -a)
+    ///
     pub fstab: Option<OsString>, // Specify alternative file to /etc/fstab
-    pub internal_only: bool,     // Don't call mount.<type> helper program
-    pub show_labels: bool,       // Show filesystem labels
-    pub no_mtab: bool,           // Don't write to /etc/mtab file
-    pub verbose: bool,           // Display detailed operation information
-    pub help: bool,              // Display help information
-    pub version: bool,           // Display version information
-
-    // Mount options
+    ///
+    pub internal_only: bool, // Don't call mount.<type> helper program
+    ///
+    pub show_labels: bool, // Show filesystem labels
+    ///
+    pub no_mtab: bool, // Don't write to /etc/mtab file
+    ///
+    pub verbose: bool, // Display detailed operation information
+    ///
+    pub help: bool, // Display help information
+    ///
+    pub version: bool, // Display version information
+    /// Mount options
     pub options: MountOptions,
-
-    // Source and target
+    /// Source and target
     pub source: Option<Source>, // Explicitly specify source (path, label, UUID)
+    ///
     pub target: Option<OsString>, // Explicitly specify mount point
+    ///
     pub target_prefix: Option<OsString>, // Specify path prefix for all mount points
-
-    // Namespace
+    /// Namespace
     pub namespace: Option<OsString>, // Execute mount in another namespace
-
-    // Operation
+    /// Operation
     pub operation: Operation,
 }
 
 #[derive(Debug, Default)]
+///
 pub struct MountOptions {
+    ///
     pub mode: Option<OsString>, // Specify how to handle options loaded from fstab
+    ///
     pub source: Option<OsString>, // Specify source of mount options
-    pub source_force: bool,     // Force use of options from fstab/mtab
+    ///
+    pub source_force: bool, // Force use of options from fstab/mtab
+    ///
     pub options: Option<OsString>, // Specify comma-separated list of mount options
+    ///
     pub test_opts: Option<OsString>, // Limit set of filesystems (used with -a)
-    pub read_only: bool,        // Mount filesystem read-only
-    pub read_write: bool,       // Mount filesystem read-write (default)
+    ///
+    pub read_only: bool, // Mount filesystem read-only
+    ///
+    pub read_write: bool, // Mount filesystem read-write (default)
+    ///
     pub types: Option<OsString>, // Limit filesystem types
 }
-
 #[derive(Debug)]
+///
 pub enum Source {
     Device(OsString), // Specify by device path
     Label(OsString),  // Specify device by filesystem label
@@ -69,6 +88,7 @@ pub enum Source {
 }
 
 #[derive(Debug, Default, PartialEq)]
+///
 pub enum Operation {
     #[default]
     Normal,
@@ -84,8 +104,9 @@ pub enum Operation {
     MakeRPrivate,    // Recursively mark an entire subtree as private
     MakeRUnbindable, // Recursively mark an entire subtree as unbindable
 }
-
+///
 pub mod options {
+    ///
     pub static ALL: &str = "all";
     ///
     pub static NO_CANONICALIZE: &str = "no-canonicalize";
@@ -166,6 +187,7 @@ pub mod options {
 }
 
 impl Config {
+    ///
     pub fn from(options: &clap::ArgMatches) -> UResult<Self> {
         let operation = Self::parse_operation(options);
         let no_canonicalize = options.is_present(options::NO_CANONICALIZE);
@@ -348,7 +370,7 @@ pub fn parse_mount_cmd_args(args: impl uucore::Args, about: &str, usage: &str) -
         Err(e) => Err(USimpleError::new(BASE_CMD_PARSE_ERROR, e.to_string())),
     }
 }
-///// Define command line application structure and arguments, using uucore to simplify code
+/// Define command line application structure and arguments, using uucore to simplify code
 pub fn mount_app<'a>(about: &'a str, usage: &'a str) -> Command<'a> {
     let mut cmd = Command::new(uucore::util_name())
         .version(crate_version!())
@@ -578,13 +600,16 @@ pub fn mount_app<'a>(about: &'a str, usage: &'a str) -> Command<'a> {
         );
     cmd.trailing_var_arg(true)
 }
+///
 pub struct ConfigHandler {
     config: Config,
 }
 impl ConfigHandler {
+    ///
     pub fn new(config: Config) -> ConfigHandler {
         Self { config }
     }
+    ///
     pub fn process(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.handle_namespace()?;
         self.handle_basic_options()?;
