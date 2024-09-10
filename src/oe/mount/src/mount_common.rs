@@ -82,8 +82,11 @@ pub struct MountOptions {
 #[derive(Debug)]
 ///
 pub enum Source {
+    ///
     Device(OsString), // Specify by device path
+    ///
     Label(OsString),  // Specify device by filesystem label
+    ///
     UUID(OsString),   // Specify device by filesystem UUID
 }
 
@@ -91,17 +94,29 @@ pub enum Source {
 ///
 pub enum Operation {
     #[default]
+    ///
     Normal,
+    ///
     Bind,            // Mount a subtree to another location
+    ///
     Move,            // Move a subtree to another location
+    ///
     RBind,           // Mount a subtree and all its submounts to another location
+    ///
     MakeShared,      // Mark a subtree as shared
+    ///
     MakeSlave,       // Mark a subtree as slave
+    ///
     MakePrivate,     // Mark a subtree as private
+    ///
     MakeUnbindable,  // Mark a subtree as unbindable
+    ///
     MakeRShared,     // Recursively mark an entire subtree as shared
+    ///
     MakeRSlave,      // Recursively mark an entire subtree as slave
+    ///
     MakeRPrivate,    // Recursively mark an entire subtree as private
+    ///
     MakeRUnbindable, // Recursively mark an entire subtree as unbindable
 }
 ///
