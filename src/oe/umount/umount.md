@@ -4,7 +4,7 @@
 ```
 umount [-hV]
  umount -a [options]
- umount [options] <source> | <directory>
+ umount [options] <source> | <dir>
 ```
 
 ## About
