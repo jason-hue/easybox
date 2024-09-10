@@ -1,29 +1,36 @@
-use std::fs::{canonicalize, File};
-use std::{fs, io};
-use std::io::{BufRead, BufReader};
-use std::os::unix::fs::FileTypeExt;
-use std::path::{Path, PathBuf};
+use crate::error::{UResult, USimpleError};
 use nix::errno::Errno;
 use nix::mount::{mount, MsFlags};
-use nix::NixPath;
-use crate::error::{UResult, USimpleError};
 use nix::unistd::Uid;
+use nix::NixPath;
 use regex::Regex;
+use std::fs::File;
+use std::io;
+use std::io::{BufRead, BufReader};
+use std::os::unix::fs::FileTypeExt;
+use std::path::Path;
 pub fn mount_fs<p: AsRef<Path>>(
     source: Option<&p>,
     target: &p,
-    fs_type:Option<&str>,
+    fs_type: Option<&str>,
     flags: MsFlags,
     data: Option<&str>,
-    internal_only: bool
+    internal_only: bool,
 ) -> nix::Result<()> {
-    let result =  mount(source.map(|s| s.as_ref()), target.as_ref(), fs_type, flags, data);
-    if internal_only{
+    let result = mount(
+        source.map(|s| s.as_ref()),
+        target.as_ref(),
+        fs_type,
+        flags,
+        data,
+    );
+    if internal_only {
         // If internal_only is specified, we only return the result of the kernel mount
         result
-    }else {
+    } else {
         match result {
-            Ok(_) => Ok(()), /// Internal mount successful
+            Ok(_) => Ok(()),
+            /// Internal mount successful
             Err(e) => {
                 eprintln!("Internal mount failed: {}. Attempting external mount...", e);
                 // Attempt external mount
@@ -37,7 +44,7 @@ fn external_mount<P: AsRef<Path>>(
     target: &P,
     fs_type: Option<&str>,
     flags: MsFlags,
-    data: Option<&str>
+    data: Option<&str>,
 ) -> nix::Result<()> {
     let mut cmd = std::process::Command::new("mount");
 
@@ -73,29 +80,44 @@ fn external_mount<P: AsRef<Path>>(
     match cmd.status() {
         Ok(status) if status.success() => Ok(()),
         Ok(status) => Err(Errno::from_i32(status.code().unwrap_or(1))),
-        Err(e) => Err(Errno::from_i32(e.raw_os_error().unwrap_or(1)))
+        Err(e) => Err(Errno::from_i32(e.raw_os_error().unwrap_or(1))),
     }
 }
-pub fn prepare_mount_source(source: &str)->UResult<String>{
+pub fn prepare_mount_source(source: &str) -> UResult<String> {
     if !Uid::effective().is_root() {
-        return Err(USimpleError::new(1, "Root privileges are required to mount devices"));
+        return Err(USimpleError::new(
+            1,
+            "Root privileges are required to mount devices",
+        ));
     }
-    let metadata = std::fs::metadata(source)
-        .map_err(|e| USimpleError::new(1, format!("Unable to get source file information: {}", e)))?;
-    if metadata.file_type().is_block_device(){
+    let metadata = std::fs::metadata(source).map_err(|e| {
+        USimpleError::new(1, format!("Unable to get source file information: {}", e))
+    })?;
+    if metadata.file_type().is_block_device() {
         // Return block device directly
         Ok(source.to_string())
-    }else {
+    } else {
         // Create loop device for regular files
         let output = std::process::Command::new("losetup")
-            .arg("-f").arg("--show").arg(source).output().map_err(|e| USimpleError::new(1, format!("Failed to create loop device: {}", e)))?;
+            .arg("-f")
+            .arg("--show")
+            .arg(source)
+            .output()
+            .map_err(|e| USimpleError::new(1, format!("Failed to create loop device: {}", e)))?;
         if !output.status.success() {
-            Err(USimpleError::new(1, format!(
-                "Failed to create loop device: {}",
-                String::from_utf8_lossy(&output.stderr)).to_string()))
-        }else {
+            Err(USimpleError::new(
+                1,
+                format!(
+                    "Failed to create loop device: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                )
+                .to_string(),
+            ))
+        } else {
             String::from_utf8(output.stdout)
-                .map_err(|e| USimpleError::new(1, format!("Failed to parse loop device path: {}", e)))
+                .map_err(|e| {
+                    USimpleError::new(1, format!("Failed to parse loop device path: {}", e))
+                })
                 .map(|s| s.trim().to_string())
         }
     }
@@ -120,8 +142,8 @@ pub fn is_already_mounted(target: &str) -> Result<bool, Box<dyn std::error::Erro
 pub fn is_swapfile(fstype: &str) -> bool {
     fstype == "swap"
 }
-pub fn parse_mount_options(options: &str) -> MsFlags {
-    let mut flags = MsFlags::empty();
+pub fn parse_mount_options(_options: &str) -> MsFlags {
+    let flags = MsFlags::empty();
     // for option in options.split(',') {
     //     // match option {
     //     //     "noexec" => flags |= MsFlags::MS_NOEXEC,
@@ -144,26 +166,30 @@ pub fn parse_fstab(path: &str) -> Result<Vec<Vec<String>>, Box<dyn std::error::E
         let line = line.map_err(|e| format!("Error reading line {}: {}", index + 1, e))?;
         let trimmed = line.trim();
         if trimmed.starts_with('#') || trimmed.is_empty() {
-            continue;  // Skip comments and empty lines
+            continue; // Skip comments and empty lines
         }
         if let Some(caps) = re.captures(trimmed) {
             let line_vec: Vec<String> = (1..=6).map(|i| caps[i].to_string()).collect();
             fstab_vec.push(line_vec);
         } else {
-            eprintln!("Warning: Line {} does not match expected format: {}", index + 1, trimmed);
+            eprintln!(
+                "Warning: Line {} does not match expected format: {}",
+                index + 1,
+                trimmed
+            );
         }
     }
 
     if fstab_vec.is_empty() {
         Err(Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            "No valid entries found in fstab file"
+            "No valid entries found in fstab file",
         )))
     } else {
         Ok(fstab_vec)
     }
 }
-pub fn find_device_by_label(label: &str) -> Result<String, Box<dyn std::error::Error>>{
+pub fn find_device_by_label(label: &str) -> Result<String, Box<dyn std::error::Error>> {
     let output = std::process::Command::new("blkid")
         .arg("-L")
         .arg(label)
@@ -176,7 +202,7 @@ pub fn find_device_by_label(label: &str) -> Result<String, Box<dyn std::error::E
         Err(io::Error::new(io::ErrorKind::NotFound, "Not found device by label").into())
     }
 }
-pub fn find_device_by_uuid(uuid: &str) -> Result<String,Box<dyn std::error::Error>>{
+pub fn find_device_by_uuid(uuid: &str) -> Result<String, Box<dyn std::error::Error>> {
     let output = std::process::Command::new("blkid")
         .arg("-U")
         .arg(uuid)
@@ -186,10 +212,9 @@ pub fn find_device_by_uuid(uuid: &str) -> Result<String,Box<dyn std::error::Erro
         let device = String::from_utf8(output.stdout)?.trim().to_string();
         println!("UUID parsed successfully!");
         Ok(device)
-    }else {
+    } else {
         Err(io::Error::new(io::ErrorKind::NotFound, "Not found device by uuid").into())
     }
-
 }
 // Check if the path is a mount point
 pub fn is_mount_point(path: &str) -> bool {

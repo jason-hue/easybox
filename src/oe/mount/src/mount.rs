@@ -1,7 +1,7 @@
+use crate::mount_common::{mount_app, parse_mount_cmd_args, Config, ConfigHandler};
 use clap::Command;
 use uucore::error::{UResult, USimpleError};
 use uucore::{help_section, help_usage};
-use crate::mount_common::{Config, ConfigHandler, mount_app, parse_mount_cmd_args};
 
 pub mod mount_common;
 
@@ -13,10 +13,13 @@ pub fn oemain(args: impl uucore::Args) -> UResult<()> {
     let config: Config = parse_mount_cmd_args(args, ABOUT, USAGE)?;
     let config_handler = ConfigHandler::new(config);
     match config_handler.process() {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => {
             // eprintln!("Error during mount operation: {}", e);
-            return Err(USimpleError::new(1, format!("Mount operation failed: {}", e)));
+            return Err(USimpleError::new(
+                1,
+                format!("Mount operation failed: {}", e),
+            ));
         }
     }
 
@@ -24,5 +27,5 @@ pub fn oemain(args: impl uucore::Args) -> UResult<()> {
 }
 
 pub fn oe_app<'a>() -> Command<'a> {
-    mount_app(ABOUT,USAGE)
+    mount_app(ABOUT, USAGE)
 }

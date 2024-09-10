@@ -1,18 +1,19 @@
-use std::ffi::OsString;
-use std::fs::File;
-use std::{fs, io};
+use clap::{crate_version, Arg, Command};
+use nix::mount::{MntFlags, MsFlags};
+use nix::sched::{setns, CloneFlags};
+use once_cell::sync::Lazy;
 use std::collections::HashSet;
+use std::ffi::OsString;
+use std::fs;
+use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
-use clap::{crate_version, Arg, Command, ArgGroup};
-use nix::mount::{MntFlags, MsFlags};
+use std::sync::Mutex;
 use uucore::error::{UResult, USimpleError};
 use uucore::format_usage;
-use nix::sched::{setns, CloneFlags};
 use uucore::umount::umount_fs;
-use std::sync::Mutex;
-use once_cell::sync::Lazy;
+
 pub static BASE_CMD_PARSE_ERROR: i32 = 1;
 
 #[derive(Debug, Default)]
@@ -94,7 +95,7 @@ pub fn parse_umount_cmd_args(args: impl uucore::Args, about: &str, usage: &str) 
     let args_list = args.collect_lossy();
     match command.try_get_matches_from(args_list) {
         Ok(matches) => Config::from(&matches),
-        Err(e) => Err(USimpleError::new(BASE_CMD_PARSE_ERROR, e.to_string()))
+        Err(e) => Err(USimpleError::new(BASE_CMD_PARSE_ERROR, e.to_string())),
     }
 }
 
@@ -105,43 +106,116 @@ pub fn umount_app<'a>(about: &'a str, usage: &'a str) -> Command<'a> {
         .override_usage(format_usage(usage))
         .infer_long_args(true);
 
-    cmd = cmd.arg(Arg::new("target").help("Specify the target to unmount").index(1).allow_invalid_utf8(true));
+    cmd = cmd.arg(
+        Arg::new("target")
+            .help("Specify the target to unmount")
+            .index(1)
+            .allow_invalid_utf8(true),
+    );
 
     for (name, short, help) in &[
         (options::ALL, Some('a'), "Unmount all filesystems"),
-        (options::ALL_TARGETS, Some('A'), "Unmount all mount points for the specified device in the current namespace"),
-        (options::NO_CANONICALIZE, Some('c'), "Don't canonicalize paths"),
-        (options::DETACH_LOOP, Some('d'), "If mounted loop device, also free this loop device"),
-        (options::FAKE, None, "Dry run; skip the umount(2) system call"),
-        (options::FORCE, Some('f'), "Force unmount (in case of an unreachable NFS system)"),
-        (options::INTERNAL_ONLY, Some('i'), "Don't call the umount.<type> helper program"),
+        (
+            options::ALL_TARGETS,
+            Some('A'),
+            "Unmount all mount points for the specified device in the current namespace",
+        ),
+        (
+            options::NO_CANONICALIZE,
+            Some('c'),
+            "Don't canonicalize paths",
+        ),
+        (
+            options::DETACH_LOOP,
+            Some('d'),
+            "If mounted loop device, also free this loop device",
+        ),
+        (
+            options::FAKE,
+            None,
+            "Dry run; skip the umount(2) system call",
+        ),
+        (
+            options::FORCE,
+            Some('f'),
+            "Force unmount (in case of an unreachable NFS system)",
+        ),
+        (
+            options::INTERNAL_ONLY,
+            Some('i'),
+            "Don't call the umount.<type> helper program",
+        ),
         (options::NO_MTAB, Some('n'), "Don't write to /etc/mtab"),
-        (options::LAZY, Some('l'), "Detach the filesystem now, clean up things later"),
-        (options::RECURSIVE, Some('R'), "Recursively unmount a target with all its children"),
-        (options::READ_ONLY, Some('r'), "In case unmounting fails, try to remount read-only"),
+        (
+            options::LAZY,
+            Some('l'),
+            "Detach the filesystem now, clean up things later",
+        ),
+        (
+            options::RECURSIVE,
+            Some('R'),
+            "Recursively unmount a target with all its children",
+        ),
+        (
+            options::READ_ONLY,
+            Some('r'),
+            "In case unmounting fails, try to remount read-only",
+        ),
         (options::VERBOSE, Some('v'), "Print current action"),
-        (options::QUIET, Some('q'), "suppress 'not mounted' error messages"),
+        (
+            options::QUIET,
+            Some('q'),
+            "suppress 'not mounted' error messages",
+        ),
         (options::HELP, Some('h'), "display this help"),
         (options::VERSION, Some('V'), "display version"),
     ] {
         let arg = Arg::new(*name).long(*name).help(*help);
-        cmd = cmd.arg(if let Some(s) = short { arg.short(*s) } else { arg });
+        cmd = cmd.arg(if let Some(s) = short {
+            arg.short(*s)
+        } else {
+            arg
+        });
     }
 
     for (name, short, help, value_name) in &[
-        (options::TEST_OPTS, Some('O'), "Limit the set of filesystems (use with -a)", "list"),
-        (options::TYPES, Some('t'), "Limit the set of filesystem types", "list"),
-        (options::NAMESPACE, Some('N'), "perform umount in another namespace", "ns"),
+        (
+            options::TEST_OPTS,
+            Some('O'),
+            "Limit the set of filesystems (use with -a)",
+            "list",
+        ),
+        (
+            options::TYPES,
+            Some('t'),
+            "Limit the set of filesystem types",
+            "list",
+        ),
+        (
+            options::NAMESPACE,
+            Some('N'),
+            "perform umount in another namespace",
+            "ns",
+        ),
     ] {
-        let arg = Arg::new(*name).long(*name).help(*help).value_name(*value_name).takes_value(true).allow_invalid_utf8(true);
-        cmd = cmd.arg(if let Some(s) = short { arg.short(*s) } else { arg });
+        let arg = Arg::new(*name)
+            .long(*name)
+            .help(*help)
+            .value_name(*value_name)
+            .takes_value(true)
+            .allow_invalid_utf8(true);
+        cmd = cmd.arg(if let Some(s) = short {
+            arg.short(*s)
+        } else {
+            arg
+        });
     }
 
     cmd
 }
 
 pub struct UmountHandler {
-    config: Config
+    config: Config,
 }
 static MTAB_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
@@ -170,7 +244,6 @@ impl UmountHandler {
     fn handle_basic_options(&self) -> Result<(), Box<dyn std::error::Error>> {
         if self.config.all {
             self.umount_all_filesystems()?;
-
         }
         if self.config.all_targets {
             self.umount_all_targets()?;
@@ -288,7 +361,10 @@ impl UmountHandler {
         // Implement logic to unmount all targets for a device
         // Read /proc/mounts file to get all mount point information
         let mounts = fs::read_to_string("/proc/mounts")?;
-        let device_to_unmount = self.config.target.as_ref()
+        let device_to_unmount = self
+            .config
+            .target
+            .as_ref()
             .ok_or("No device specified for unmounting all targets")?;
 
         // Iterate through all mount points, find matching devices and unmount
@@ -296,7 +372,11 @@ impl UmountHandler {
             let fields: Vec<&str> = line.split_whitespace().collect();
             if fields.len() >= 2 && fields[0] == device_to_unmount {
                 let mount_point = fields[1];
-                self.verbose_print(&format!("Unmounting target: {} for device: {:?}", mount_point, device_to_unmount.to_str()));
+                self.verbose_print(&format!(
+                    "Unmounting target: {} for device: {:?}",
+                    mount_point,
+                    device_to_unmount.to_str()
+                ));
 
                 if !self.config.fake {
                     self.umount_single_target(mount_point)?;
@@ -326,7 +406,7 @@ impl UmountHandler {
                 }
                 umount_fs::<&str>(target.as_ref(), flags, self.config.internal_only)
             } else {
-                let mut flags = MntFlags::empty();
+                let flags = MntFlags::empty();
                 umount_fs::<&str>(target.as_ref(), flags, self.config.internal_only)
             };
             match result {
@@ -335,8 +415,14 @@ impl UmountHandler {
                     if self.config.detach_loop {
                         if let Ok(device) = loop_device {
                             match self.detach_loop_device(&device) {
-                                Ok(_) => self.verbose_print(&format!("Successfully detached loop device {}", device)),
-                                Err(e) => self.verbose_print(&format!("Failed to detach loop device {}: {}", device, e)),
+                                Ok(_) => self.verbose_print(&format!(
+                                    "Successfully detached loop device {}",
+                                    device
+                                )),
+                                Err(e) => self.verbose_print(&format!(
+                                    "Failed to detach loop device {}: {}",
+                                    device, e
+                                )),
                             }
                         } else {
                             self.verbose_print("No loop device found to detach");
@@ -345,12 +431,15 @@ impl UmountHandler {
                     if !self.config.no_mtab {
                         self.update_mtab(target)?;
                     }
-                },
+                }
                 Err(e) => {
                     if self.config.read_only {
-                        self.verbose_print(&format!("Unmount failed, attempting read-only remount for {}", target));
+                        self.verbose_print(&format!(
+                            "Unmount failed, attempting read-only remount for {}",
+                            target
+                        ));
                         self.remount_read_only(target)?;
-                    } else if !self.config.quiet{
+                    } else if !self.config.quiet {
                         eprintln!("Failed to unmount {}: {}", target, e);
                         return Err(Box::new(e));
                     }
@@ -370,14 +459,11 @@ impl UmountHandler {
         if let Some(ns) = &self.config.namespace {
             self.verbose_print(&format!("Entering namespace: {:?}", ns));
 
-            let ns_file = File::open(ns).map_err(|e| format!("Failed to open namespace file: {}", e))?;
-
+            let ns_file =
+                File::open(ns).map_err(|e| format!("Failed to open namespace file: {}", e))?;
             let _guard = scopeguard::guard(ns_file, |f| drop(f));
-
             setns(_guard.as_raw_fd(), CloneFlags::CLONE_NEWNS)
                 .map_err(|e| format!("Failed to enter namespace: {}", e))?;
-
-
             self.verbose_print("Successfully entered the specified namespace");
         }
         Ok(())
@@ -400,26 +486,31 @@ impl UmountHandler {
         Ok(())
     }
     fn get_loop_device(&self, target: &str) -> Result<String, Box<dyn std::error::Error>> {
-        self.verbose_print(&format!("Attempting to find loop device for target: {}", target));
+        self.verbose_print(&format!(
+            "Attempting to find loop device for target: {}",
+            target
+        ));
         let target_path = Path::new(target).canonicalize()?;
         // Method 1: Check /proc/mounts
         let mounts = fs::read_to_string("/proc/mounts")?;
         for line in mounts.lines() {
             let fields: Vec<&str> = line.split_whitespace().collect();
             if fields.len() > 1 {
-                let mount_point = Path::new(fields[1]).canonicalize().unwrap_or_else(|_| Path::new(fields[1]).to_path_buf());
+                let mount_point = Path::new(fields[1])
+                    .canonicalize()
+                    .unwrap_or_else(|_| Path::new(fields[1]).to_path_buf());
                 if mount_point == target_path && fields[0].starts_with("/dev/loop") {
-                    self.verbose_print(&format!("Found loop device in /proc/mounts: {}", fields[0]));
+                    self.verbose_print(&format!(
+                        "Found loop device in /proc/mounts: {}",
+                        fields[0]
+                    ));
                     return Ok(fields[0].to_string());
                 }
             }
         }
 
-
         // Method 2: Use losetup command
-        let output = std::process::Command::new("losetup")
-            .arg("-a")
-            .output()?;
+        let output = std::process::Command::new("losetup").arg("-a").output()?;
         let output_str = String::from_utf8_lossy(&output.stdout);
         for line in output_str.lines() {
             let parts: Vec<&str> = line.splitn(2, ": ").collect();
@@ -459,7 +550,11 @@ impl UmountHandler {
                 let path = entry.path();
                 if path.is_dir() {
                     if let Err(e) = self.umount_recursive(path.to_str().ok_or("Invalid path")?) {
-                        log::warn!("Error during recursive unmount of {}: {}", path.display(), e);
+                        log::warn!(
+                            "Error during recursive unmount of {}: {}",
+                            path.display(),
+                            e
+                        );
                     }
                 }
             }
@@ -479,7 +574,12 @@ impl UmountHandler {
         let content = fs::read_to_string("/etc/mtab")?;
         let updated_content: String = content
             .lines()
-            .filter(|line| !line.split_whitespace().nth(1).map_or(false, |mp| mp == target))
+            .filter(|line| {
+                !line
+                    .split_whitespace()
+                    .nth(1)
+                    .map_or(false, |mp| mp == target)
+            })
             .collect::<Vec<&str>>()
             .join("\n");
         fs::write("/etc/mtab", updated_content)?;

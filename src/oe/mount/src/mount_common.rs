@@ -1,46 +1,50 @@
-use std::any::Any;
-use std::ffi::OsString;
-use std::{fs, io};
+use clap::{crate_version, Arg, ArgGroup, Command};
+use nix::mount::MsFlags;
+use nix::sched::{setns, CloneFlags};
+use nix::unistd::{fork, ForkResult};
+
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::fs::File;
-use std::io::{BufRead,Read};
+use std::io::BufRead;
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use std::process::exit;
-use clap::{crate_version, Arg, Command, ArgGroup};
-use nix::mount::MsFlags;
-use nix::unistd::{fork,ForkResult};
+use std::{fs, io};
 use uucore::error::{UResult, USimpleError};
 use uucore::format_usage;
-use uucore::mount::{find_device_by_label, find_device_by_uuid, is_already_mounted, is_mount_point, is_swapfile, mount_fs, parse_fstab, prepare_mount_source};
-use nix::sched::{setns, CloneFlags};
+use uucore::mount::{
+    find_device_by_label, find_device_by_uuid, is_already_mounted, is_mount_point, is_swapfile,
+    mount_fs, parse_fstab, prepare_mount_source,
+};
+
 pub static BASE_CMD_PARSE_ERROR: i32 = 1;
 
 #[derive(Debug, Default)]
 pub struct Config {
     // Basic options
-    pub all: bool,// Mount all filesystems mentioned in /etc/fstab
-    pub no_canonicalize: bool,// Don't canonicalize paths
-    pub fake: bool,// Simulate mounting, don't actually call mount system call
-    pub fork: bool,// Fork for each device (used with -a)
-    pub fstab: Option<OsString>,// Specify alternative file to /etc/fstab
-    pub internal_only: bool,// Don't call mount.<type> helper program
-    pub show_labels: bool,// Show filesystem labels
-    pub no_mtab: bool,// Don't write to /etc/mtab file
-    pub verbose: bool,// Display detailed operation information
-    pub help: bool,// Display help information
-    pub version: bool,// Display version information
+    pub all: bool,               // Mount all filesystems mentioned in /etc/fstab
+    pub no_canonicalize: bool,   // Don't canonicalize paths
+    pub fake: bool,              // Simulate mounting, don't actually call mount system call
+    pub fork: bool,              // Fork for each device (used with -a)
+    pub fstab: Option<OsString>, // Specify alternative file to /etc/fstab
+    pub internal_only: bool,     // Don't call mount.<type> helper program
+    pub show_labels: bool,       // Show filesystem labels
+    pub no_mtab: bool,           // Don't write to /etc/mtab file
+    pub verbose: bool,           // Display detailed operation information
+    pub help: bool,              // Display help information
+    pub version: bool,           // Display version information
 
     // Mount options
     pub options: MountOptions,
 
     // Source and target
-    pub source: Option<Source>,// Explicitly specify source (path, label, UUID)
-    pub target: Option<OsString>,// Explicitly specify mount point
-    pub target_prefix: Option<OsString>,// Specify path prefix for all mount points
+    pub source: Option<Source>, // Explicitly specify source (path, label, UUID)
+    pub target: Option<OsString>, // Explicitly specify mount point
+    pub target_prefix: Option<OsString>, // Specify path prefix for all mount points
 
     // Namespace
-    pub namespace: Option<OsString>,// Execute mount in another namespace
+    pub namespace: Option<OsString>, // Execute mount in another namespace
 
     // Operation
     pub operation: Operation,
@@ -48,119 +52,118 @@ pub struct Config {
 
 #[derive(Debug, Default)]
 pub struct MountOptions {
-    pub mode: Option<OsString>,// Specify how to handle options loaded from fstab
-    pub source: Option<OsString>,// Specify source of mount options
-    pub source_force: bool,// Force use of options from fstab/mtab
-    pub options: Option<OsString>,// Specify comma-separated list of mount options
-    pub test_opts: Option<OsString>,// Limit set of filesystems (used with -a)
-    pub read_only: bool,// Mount filesystem read-only
-    pub read_write: bool,// Mount filesystem read-write (default)
-    pub types: Option<OsString>,// Limit filesystem types
+    pub mode: Option<OsString>, // Specify how to handle options loaded from fstab
+    pub source: Option<OsString>, // Specify source of mount options
+    pub source_force: bool,     // Force use of options from fstab/mtab
+    pub options: Option<OsString>, // Specify comma-separated list of mount options
+    pub test_opts: Option<OsString>, // Limit set of filesystems (used with -a)
+    pub read_only: bool,        // Mount filesystem read-only
+    pub read_write: bool,       // Mount filesystem read-write (default)
+    pub types: Option<OsString>, // Limit filesystem types
 }
 
 #[derive(Debug)]
 pub enum Source {
-    Device(OsString),// Specify by device path
-    Label(OsString),// Specify device by filesystem label
-    UUID(OsString),// Specify device by filesystem UUID
+    Device(OsString), // Specify by device path
+    Label(OsString),  // Specify device by filesystem label
+    UUID(OsString),   // Specify device by filesystem UUID
 }
 
-#[derive(Debug, Default,PartialEq)]
+#[derive(Debug, Default, PartialEq)]
 pub enum Operation {
     #[default]
     Normal,
-    Bind,// Mount a subtree to another location
-    Move,// Move a subtree to another location
-    RBind,// Mount a subtree and all its submounts to another location
-    MakeShared,// Mark a subtree as shared
-    MakeSlave,// Mark a subtree as slave
-    MakePrivate,// Mark a subtree as private
-    MakeUnbindable,// Mark a subtree as unbindable
-    MakeRShared,// Recursively mark an entire subtree as shared
-    MakeRSlave,// Recursively mark an entire subtree as slave
-    MakeRPrivate,// Recursively mark an entire subtree as private
-    MakeRUnbindable,// Recursively mark an entire subtree as unbindable
+    Bind,            // Mount a subtree to another location
+    Move,            // Move a subtree to another location
+    RBind,           // Mount a subtree and all its submounts to another location
+    MakeShared,      // Mark a subtree as shared
+    MakeSlave,       // Mark a subtree as slave
+    MakePrivate,     // Mark a subtree as private
+    MakeUnbindable,  // Mark a subtree as unbindable
+    MakeRShared,     // Recursively mark an entire subtree as shared
+    MakeRSlave,      // Recursively mark an entire subtree as slave
+    MakeRPrivate,    // Recursively mark an entire subtree as private
+    MakeRUnbindable, // Recursively mark an entire subtree as unbindable
 }
 
-pub mod options{
-    pub static ALL: &str = "all";                       // -a, --all
+pub mod options {
+    pub static ALL: &str = "all";
     ///
-    pub static NO_CANONICALIZE: &str = "no-canonicalize"; // -c, --no-canonicalize
+    pub static NO_CANONICALIZE: &str = "no-canonicalize";
     ///
-    pub static FAKE: &str = "fake";                     // -f, --fake
+    pub static FAKE: &str = "fake";
     ///
-    pub static FORK: &str = "fork";                     // -F, --fork
+    pub static FORK: &str = "fork";
     ///
-    pub static FSTAB: &str = "fstab";                   // -T, --fstab
+    pub static FSTAB: &str = "fstab";
     ///
-    pub static INTERNAL_ONLY: &str = "internal-only";   // -i, --internal-only
+    pub static INTERNAL_ONLY: &str = "internal-only";
     ///
-    pub static SHOW_LABELS: &str = "show-labels";       // -l, --show-labels
+    pub static SHOW_LABELS: &str = "show-labels";
     ///
-    pub static NO_MTAB: &str = "no-mtab";               // -n, --no-mtab
+    pub static NO_MTAB: &str = "no-mtab";
     ///
-    pub static OPTIONS_MODE: &str = "options-mode";     // --options-mode
+    pub static OPTIONS_MODE: &str = "options-mode";
     ///
-    pub static OPTIONS_SOURCE: &str = "options-source"; // --options-source
+    pub static OPTIONS_SOURCE: &str = "options-source";
     ///
-    pub static OPTIONS_SOURCE_FORCE: &str = "options-source-force"; // --options-source-force
+    pub static OPTIONS_SOURCE_FORCE: &str = "options-source-force";
     ///
-    pub static OPTIONS: &str = "options";               // -o, --options
+    pub static OPTIONS: &str = "options";
     ///
-    pub static TEST_OPTS: &str = "test-opts";           // -O, --test-opts
+    pub static TEST_OPTS: &str = "test-opts";
     ///
-    pub static READ_ONLY: &str = "read-only";           // -r, --read-only
+    pub static READ_ONLY: &str = "read-only";
     ///
-    pub static TYPES: &str = "types";                   // -t, --types
+    pub static TYPES: &str = "types";
     ///
-    pub static SOURCE: &str = "source";                 // --source
+    pub static SOURCE: &str = "source";
     ///
-    pub static TARGET: &str = "target";                 // --target
+    pub static TARGET: &str = "target";
     ///
-    pub static TARGET_PREFIX: &str = "target-prefix";   // --target-prefix
+    pub static TARGET_PREFIX: &str = "target-prefix";
     ///
-    pub static VERBOSE: &str = "verbose";               // -v, --verbose
+    pub static VERBOSE: &str = "verbose";
     ///
-    pub static READ_WRITE: &str = "read-write";         // -w, --rw, --read-write
+    pub static READ_WRITE: &str = "read-write";
     ///
-    pub static NAMESPACE: &str = "namespace";           // -N, --namespace
+    pub static NAMESPACE: &str = "namespace";
     ///
-    pub static HELP: &str = "help";                     // -h, --help
+    pub static HELP: &str = "help";
     ///
-    pub static VERSION: &str = "version";               // -V, --version
+    pub static VERSION: &str = "version";
 
     // Source
     ///
-    pub static LABEL: &str = "label";                   // -L, --label
+    pub static LABEL: &str = "label";
     ///
-    pub static UUID: &str = "uuid";                     // -U, --uuid
+    pub static UUID: &str = "uuid";
     ///
-    pub static DEVICE: &str = "device";                 // <device>
+    pub static DEVICE: &str = "device";
 
     // operations
     ///
-    pub static BIND: &str = "bind";                     // -B, --bind
+    pub static BIND: &str = "bind";
     ///
-    pub static MOVE: &str = "move";                     // -M, --move
+    pub static MOVE: &str = "move";
     ///
-    pub static RBIND: &str = "rbind";                   // -R, --rbind
+    pub static RBIND: &str = "rbind";
     ///
-    pub static MAKE_SHARED: &str = "make-shared";       // --make-shared
+    pub static MAKE_SHARED: &str = "make-shared";
     ///
-    pub static MAKE_SLAVE: &str = "make-slave";         // --make-slave
+    pub static MAKE_SLAVE: &str = "make-slave";
     ///
-    pub static MAKE_PRIVATE: &str = "make-private";     // --make-private
+    pub static MAKE_PRIVATE: &str = "make-private";
     ///
-    pub static MAKE_UNBINDABLE: &str = "make-unbindable"; // --make-unbindable
+    pub static MAKE_UNBINDABLE: &str = "make-unbindable";
     ///
-    pub static MAKE_RSHARED: &str = "make-rshared";     // --make-rshared
+    pub static MAKE_RSHARED: &str = "make-rshared";
     ///
-    pub static MAKE_RSLAVE: &str = "make-rslave";       // --make-rslave
+    pub static MAKE_RSLAVE: &str = "make-rslave";
     ///
-    pub static MAKE_RPRIVATE: &str = "make-rprivate";   // --make-rprivate
+    pub static MAKE_RPRIVATE: &str = "make-rprivate";
     ///
-    pub static MAKE_RUNBINDABLE: &str = "make-runbindable"; // --make-runbindable
-
+    pub static MAKE_RUNBINDABLE: &str = "make-runbindable";
 }
 
 impl Config {
@@ -170,55 +173,69 @@ impl Config {
 
         let (canonicalized_source, canonicalized_target) = if !no_canonicalize {
             let source = if operation == Operation::Move {
-                options.value_of_os(options::DEVICE)
+                options
+                    .value_of_os(options::DEVICE)
                     .map(|s| Source::Device(s.to_owned()))
-            }else if operation == Operation::MakeShared || operation == Operation::MakeSlave || operation == Operation::MakePrivate ||
-                operation == Operation::MakeUnbindable || operation == Operation::MakeRShared || operation == Operation::MakeRSlave ||
-                operation == Operation::MakeRPrivate || operation == Operation::MakeRUnbindable {
+            } else if operation == Operation::MakeShared
+                || operation == Operation::MakeSlave
+                || operation == Operation::MakePrivate
+                || operation == Operation::MakeUnbindable
+                || operation == Operation::MakeRShared
+                || operation == Operation::MakeRSlave
+                || operation == Operation::MakeRPrivate
+                || operation == Operation::MakeRUnbindable
+            {
                 None
-
-            }else {
+            } else {
                 Self::parse_source(options)
             };
 
             let target = if operation == Operation::Move {
                 options.value_of_os("target_positional")
-            }else if operation == Operation::MakeShared || operation == Operation::MakeSlave || operation == Operation::MakePrivate ||
-                operation == Operation::MakeUnbindable || operation == Operation::MakeRShared || operation == Operation::MakeRSlave ||
-                operation == Operation::MakeRPrivate || operation == Operation::MakeRUnbindable  {
+            } else if operation == Operation::MakeShared
+                || operation == Operation::MakeSlave
+                || operation == Operation::MakePrivate
+                || operation == Operation::MakeUnbindable
+                || operation == Operation::MakeRShared
+                || operation == Operation::MakeRSlave
+                || operation == Operation::MakeRPrivate
+                || operation == Operation::MakeRUnbindable
+            {
                 options.value_of_os(options::DEVICE)
-
-            }else {
-                options.value_of_os(options::TARGET)
+            } else {
+                options
+                    .value_of_os(options::TARGET)
                     .or_else(|| options.value_of_os("target_positional"))
-            }.map(OsString::from);
-
+            }
+            .map(OsString::from);
             (
                 source.and_then(|s| match s {
                     Source::Device(dev) => match fs::canonicalize(&dev) {
                         Ok(path) => Some(Source::Device(path.into_os_string())),
                         Err(e) => {
-                            eprintln!("Warning: Unable to canonicalize device path {:?}: {}", dev, e);
+                            eprintln!(
+                                "Warning: Unable to canonicalize device path {:?}: {}",
+                                dev, e
+                            );
                             Some(Source::Device(dev))
                         }
                     },
                     Source::Label(label) => Some(Source::Label(label)),
-                    Source::UUID(uuid) => Some(Source::UUID(uuid))
+                    Source::UUID(uuid) => Some(Source::UUID(uuid)),
                 }),
-                target.and_then(|t| {
-                    match fs::canonicalize(&t) {
-                        Ok(path) => Some(path.into_os_string()),
-                        Err(e) => {
-                            eprintln!("Warning: Unable to canonicalize device path {:?}: {}", t, e);
-                            Some(t)
-                        }
+                target.and_then(|t| match fs::canonicalize(&t) {
+                    Ok(path) => Some(path.into_os_string()),
+                    Err(e) => {
+                        eprintln!("Warning: Unable to canonicalize device path {:?}: {}", t, e);
+                        Some(t)
                     }
-                })
+                }),
             )
         } else {
             // If no canonicalization is specified, use the original paths
             let source = if operation == Operation::Move {
-                options.value_of_os(options::DEVICE)
+                options
+                    .value_of_os(options::DEVICE)
                     .map(|s| Source::Device(s.to_owned()))
             } else {
                 Self::parse_source(options)
@@ -227,9 +244,11 @@ impl Config {
             let target = if operation == Operation::Move {
                 options.value_of_os("target_positional")
             } else {
-                options.value_of_os(options::TARGET)
+                options
+                    .value_of_os(options::TARGET)
                     .or_else(|| options.value_of_os("target_positional"))
-            }.map(OsString::from);
+            }
+            .map(OsString::from);
 
             (source, target)
         };
@@ -248,8 +267,12 @@ impl Config {
             version: options.is_present(options::VERSION),
 
             options: MountOptions {
-                mode: options.value_of_os(options::OPTIONS_MODE).map(OsString::from),
-                source: options.value_of_os(options::OPTIONS_SOURCE).map(OsString::from),
+                mode: options
+                    .value_of_os(options::OPTIONS_MODE)
+                    .map(OsString::from),
+                source: options
+                    .value_of_os(options::OPTIONS_SOURCE)
+                    .map(OsString::from),
                 source_force: options.is_present(options::OPTIONS_SOURCE_FORCE),
                 options: options.value_of_os(options::OPTIONS).map(OsString::from),
                 test_opts: options.value_of_os(options::TEST_OPTS).map(OsString::from),
@@ -260,7 +283,9 @@ impl Config {
 
             source: canonicalized_source,
             target: canonicalized_target,
-            target_prefix: options.value_of_os(options::TARGET_PREFIX).map(OsString::from),
+            target_prefix: options
+                .value_of_os(options::TARGET_PREFIX)
+                .map(OsString::from),
 
             namespace: options.value_of_os(options::NAMESPACE).map(OsString::from),
 
@@ -274,25 +299,39 @@ impl Config {
         } else if let Some(uuid) = options.value_of_os(options::UUID) {
             Some(Source::UUID(uuid.to_owned()))
         } else {
-            options.value_of_os(options::DEVICE)
+            options
+                .value_of_os(options::DEVICE)
                 .or_else(|| options.value_of_os(options::SOURCE))
                 .map(|device| Source::Device(device.to_owned()))
         }
     }
 
     fn parse_operation(options: &clap::ArgMatches) -> Operation {
-        if options.is_present(options::BIND) { Operation::Bind }
-        else if options.is_present(options::MOVE) { Operation::Move }
-        else if options.is_present(options::RBIND) { Operation::RBind }
-        else if options.is_present(options::MAKE_SHARED) { Operation::MakeShared }
-        else if options.is_present(options::MAKE_SLAVE) { Operation::MakeSlave }
-        else if options.is_present(options::MAKE_PRIVATE) { Operation::MakePrivate }
-        else if options.is_present(options::MAKE_UNBINDABLE) { Operation::MakeUnbindable }
-        else if options.is_present(options::MAKE_RSHARED) { Operation::MakeRShared }
-        else if options.is_present(options::MAKE_RSLAVE) { Operation::MakeRSlave }
-        else if options.is_present(options::MAKE_RPRIVATE) { Operation::MakeRPrivate }
-        else if options.is_present(options::MAKE_RUNBINDABLE) { Operation::MakeRUnbindable }
-        else { Operation::Normal }
+        if options.is_present(options::BIND) {
+            Operation::Bind
+        } else if options.is_present(options::MOVE) {
+            Operation::Move
+        } else if options.is_present(options::RBIND) {
+            Operation::RBind
+        } else if options.is_present(options::MAKE_SHARED) {
+            Operation::MakeShared
+        } else if options.is_present(options::MAKE_SLAVE) {
+            Operation::MakeSlave
+        } else if options.is_present(options::MAKE_PRIVATE) {
+            Operation::MakePrivate
+        } else if options.is_present(options::MAKE_UNBINDABLE) {
+            Operation::MakeUnbindable
+        } else if options.is_present(options::MAKE_RSHARED) {
+            Operation::MakeRShared
+        } else if options.is_present(options::MAKE_RSLAVE) {
+            Operation::MakeRSlave
+        } else if options.is_present(options::MAKE_RPRIVATE) {
+            Operation::MakeRPrivate
+        } else if options.is_present(options::MAKE_RUNBINDABLE) {
+            Operation::MakeRUnbindable
+        } else {
+            Operation::Normal
+        }
     }
     // pub fn get_device_path(&self) -> Option<&str> {
     //     match &self.source {
@@ -300,16 +339,14 @@ impl Config {
     //         _ => None,
     //     }
     // }
-
-
 }
 /// Parse arguments and populate Config struct
 pub fn parse_mount_cmd_args(args: impl uucore::Args, about: &str, usage: &str) -> UResult<Config> {
-    let command = mount_app(about,usage);
+    let command = mount_app(about, usage);
     let args_list = args.collect_lossy();
     match command.try_get_matches_from(args_list) {
         Ok(matches) => Config::from(&matches),
-        Err(e) => Err(uucore::error::USimpleError::new(BASE_CMD_PARSE_ERROR,e.to_string()))
+        Err(e) => Err(USimpleError::new(BASE_CMD_PARSE_ERROR, e.to_string())),
     }
 }
 ///// Define command line application structure and arguments, using uucore to simplify code
@@ -321,88 +358,233 @@ pub fn mount_app<'a>(about: &'a str, usage: &'a str) -> Command<'a> {
         .infer_long_args(true);
 
     // Add positional arguments
-    cmd = cmd.arg(Arg::new(options::DEVICE).takes_value(true).help("Specify device by path").index(1).allow_invalid_utf8(true))
-        .arg(Arg::new("target_positional").takes_value(true).help("Specify mount point").index(2).allow_invalid_utf8(true));
+    cmd = cmd
+        .arg(
+            Arg::new(options::DEVICE)
+                .takes_value(true)
+                .help("Specify device by path")
+                .index(1)
+                .allow_invalid_utf8(true),
+        )
+        .arg(
+            Arg::new("target_positional")
+                .takes_value(true)
+                .help("Specify mount point")
+                .index(2)
+                .allow_invalid_utf8(true),
+        );
 
     // Add boolean flags
     for (name, short, help) in &[
-        (options::ALL, Some('a'), "Mount all filesystems mentioned in fstab"),
-        (options::NO_CANONICALIZE, Some('c'), "Don't canonicalize paths"),
-        (options::FAKE, Some('f'), "Dry run; skip the mount(2) system call"),
-        (options::FORK, Some('F'), "Fork for each device (use with -a option)"),
-        (options::INTERNAL_ONLY, Some('i'), "Don't call the mount.<type> helper program"),
-        (options::SHOW_LABELS, Some('l'), "Also show filesystem labels"),
+        (
+            options::ALL,
+            Some('a'),
+            "Mount all filesystems mentioned in fstab",
+        ),
+        (
+            options::NO_CANONICALIZE,
+            Some('c'),
+            "Don't canonicalize paths",
+        ),
+        (
+            options::FAKE,
+            Some('f'),
+            "Dry run; skip the mount(2) system call",
+        ),
+        (
+            options::FORK,
+            Some('F'),
+            "Fork for each device (use with -a option)",
+        ),
+        (
+            options::INTERNAL_ONLY,
+            Some('i'),
+            "Don't call the mount.<type> helper program",
+        ),
+        (
+            options::SHOW_LABELS,
+            Some('l'),
+            "Also show filesystem labels",
+        ),
         (options::NO_MTAB, Some('n'), "Don't write to /etc/mtab"),
-        (options::OPTIONS_SOURCE_FORCE, Some('\0'), "Force use of options from fstab/mtab"),
-        (options::READ_ONLY, Some('r'), "Mount filesystem read-only (same as -o ro)"),
+        (
+            options::OPTIONS_SOURCE_FORCE,
+            Some('\0'),
+            "Force use of options from fstab/mtab",
+        ),
+        (
+            options::READ_ONLY,
+            Some('r'),
+            "Mount filesystem read-only (same as -o ro)",
+        ),
         (options::VERBOSE, Some('v'), "Print current operations"),
-        (options::READ_WRITE, Some('w'), "Mount filesystem read-write (default)"),
+        (
+            options::READ_WRITE,
+            Some('w'),
+            "Mount filesystem read-write (default)",
+        ),
         (options::HELP, Some('h'), "Display this help"),
         (options::VERSION, Some('V'), "Display version"),
     ] {
         let arg = Arg::new(*name).long(*name).help(*help).global(true);
-        cmd = cmd.arg(if let Some(s) = short { arg.short(*s) } else { arg });
+        cmd = cmd.arg(if let Some(s) = short {
+            arg.short(*s)
+        } else {
+            arg
+        });
     }
     for (name, short, help) in &[
         (options::FSTAB, Some('T'), "Alternative file to /etc/fstab"),
-        (options::OPTIONS_MODE, None, "How to handle options loaded from fstab"),
+        (
+            options::OPTIONS_MODE,
+            None,
+            "How to handle options loaded from fstab",
+        ),
         (options::OPTIONS_SOURCE, None, "Mount options source"),
-        (options::OPTIONS, Some('o'), "Comma-separated list of mount options"),
-        (options::TEST_OPTS, Some('O'), "Limit set of filesystems (use with -a option)"),
-        (options::TYPES, Some('t'), "Limit the set of filesystem types"),
+        (
+            options::OPTIONS,
+            Some('o'),
+            "Comma-separated list of mount options",
+        ),
+        (
+            options::TEST_OPTS,
+            Some('O'),
+            "Limit set of filesystems (use with -a option)",
+        ),
+        (
+            options::TYPES,
+            Some('t'),
+            "Limit the set of filesystem types",
+        ),
         (options::SOURCE, None, "Specify source (path, label, uuid)"),
         (options::TARGET, None, "Specify mount point"),
-        (options::TARGET_PREFIX, None, "Specify path used for all mountpoints"),
-        (options::NAMESPACE, Some('N'), "Perform mount in another namespace"),
+        (
+            options::TARGET_PREFIX,
+            None,
+            "Specify path used for all mountpoints",
+        ),
+        (
+            options::NAMESPACE,
+            Some('N'),
+            "Perform mount in another namespace",
+        ),
         (options::LABEL, Some('L'), "Synonym for LABEL=<label>"),
         (options::UUID, Some('U'), "Synonym for UUID=<uuid>"),
     ] {
-        let arg = Arg::new(*name).long(*name).help(*help).takes_value(true).allow_invalid_utf8(true);
-        cmd = cmd.arg(if let Some(s) = short { arg.short(*s) } else { arg });
+        let arg = Arg::new(*name)
+            .long(*name)
+            .help(*help)
+            .takes_value(true)
+            .allow_invalid_utf8(true);
+        cmd = cmd.arg(if let Some(s) = short {
+            arg.short(*s)
+        } else {
+            arg
+        });
     }
     for (name, short, help) in &[
-        (options::BIND, Some('B'), "Mount a subtree somewhere else (same as -o bind)"),
-        (options::MOVE, Some('M'), "Move a subtree to some other place"),
-        (options::RBIND, Some('R'), "Mount a subtree and all submounts somewhere else"),
+        (
+            options::BIND,
+            Some('B'),
+            "Mount a subtree somewhere else (same as -o bind)",
+        ),
+        (
+            options::MOVE,
+            Some('M'),
+            "Move a subtree to some other place",
+        ),
+        (
+            options::RBIND,
+            Some('R'),
+            "Mount a subtree and all submounts somewhere else",
+        ),
         (options::MAKE_SHARED, None, "Mark a subtree as shared"),
         (options::MAKE_SLAVE, None, "Mark a subtree as slave"),
         (options::MAKE_PRIVATE, None, "Mark a subtree as private"),
-        (options::MAKE_UNBINDABLE, None, "Mark a subtree as unbindable"),
-        (options::MAKE_RSHARED, None, "Recursively mark an entire subtree as shared"),
-        (options::MAKE_RSLAVE, None, "Recursively mark an entire subtree as slave"),
-        (options::MAKE_RPRIVATE, None, "Recursively mark an entire subtree as private"),
-        (options::MAKE_RUNBINDABLE, None, "Recursively mark an entire subtree as unbindable"),
+        (
+            options::MAKE_UNBINDABLE,
+            None,
+            "Mark a subtree as unbindable",
+        ),
+        (
+            options::MAKE_RSHARED,
+            None,
+            "Recursively mark an entire subtree as shared",
+        ),
+        (
+            options::MAKE_RSLAVE,
+            None,
+            "Recursively mark an entire subtree as slave",
+        ),
+        (
+            options::MAKE_RPRIVATE,
+            None,
+            "Recursively mark an entire subtree as private",
+        ),
+        (
+            options::MAKE_RUNBINDABLE,
+            None,
+            "Recursively mark an entire subtree as unbindable",
+        ),
     ] {
         let arg = Arg::new(*name).long(*name).help(*help);
-        cmd = cmd.arg(if let Some(s) = short { arg.short(*s) } else { arg });
+        cmd = cmd.arg(if let Some(s) = short {
+            arg.short(*s)
+        } else {
+            arg
+        });
     }
-    cmd = cmd.group(ArgGroup::new("operation")
-        .args(&[options::BIND, options::MOVE, options::RBIND, options::MAKE_SHARED, options::MAKE_SLAVE, options::MAKE_PRIVATE,
-            options::MAKE_UNBINDABLE, options::MAKE_RSHARED, options::MAKE_RSLAVE, options::MAKE_RPRIVATE, options::MAKE_RUNBINDABLE])
-        .required(false))
-        .group(ArgGroup::new("source_operation")
-            .args(&[options::LABEL, options::UUID, options::DEVICE, options::SOURCE])
-            .required(false))
-        .group(ArgGroup::new("read_write_mode")
-            .args(&[options::READ_ONLY, options::READ_WRITE])
-            .required(false))
-        .group(ArgGroup::new("options_source")
-            .args(&[options::OPTIONS_SOURCE, options::OPTIONS_SOURCE_FORCE])
-            .required(false))
-        .group(ArgGroup::new("target_options")
-            .args(&[options::TARGET,"target_positional"])
-            .required(false));
-
+    cmd = cmd
+        .group(
+            ArgGroup::new("operation")
+                .args(&[
+                    options::BIND,
+                    options::MOVE,
+                    options::RBIND,
+                    options::MAKE_SHARED,
+                    options::MAKE_SLAVE,
+                    options::MAKE_PRIVATE,
+                    options::MAKE_UNBINDABLE,
+                    options::MAKE_RSHARED,
+                    options::MAKE_RSLAVE,
+                    options::MAKE_RPRIVATE,
+                    options::MAKE_RUNBINDABLE,
+                ])
+                .required(false),
+        )
+        .group(
+            ArgGroup::new("source_operation")
+                .args(&[
+                    options::LABEL,
+                    options::UUID,
+                    options::DEVICE,
+                    options::SOURCE,
+                ])
+                .required(false),
+        )
+        .group(
+            ArgGroup::new("read_write_mode")
+                .args(&[options::READ_ONLY, options::READ_WRITE])
+                .required(false),
+        )
+        .group(
+            ArgGroup::new("options_source")
+                .args(&[options::OPTIONS_SOURCE, options::OPTIONS_SOURCE_FORCE])
+                .required(false),
+        )
+        .group(
+            ArgGroup::new("target_options")
+                .args(&[options::TARGET, "target_positional"])
+                .required(false),
+        );
     cmd.trailing_var_arg(true)
 }
-pub struct ConfigHandler{
-    config: Config
+pub struct ConfigHandler {
+    config: Config,
 }
-impl ConfigHandler{
+impl ConfigHandler {
     pub fn new(config: Config) -> ConfigHandler {
-        Self{
-            config,
-        }
+        Self { config }
     }
     pub fn process(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.handle_namespace()?;
@@ -418,7 +600,6 @@ impl ConfigHandler{
         }
         if self.config.no_canonicalize {
             self.verbose_print("Path canonicalization disabled");
-
         }
         if self.config.fake {
             self.verbose_print("Running in fake mode - no actual mounting will occur");
@@ -477,7 +658,9 @@ impl ConfigHandler{
     fn handle_source_and_target(&self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(source) = &self.config.source {
             match source {
-                Source::Device(device) => self.verbose_print(&format!("Source device: {:?}", device)),
+                Source::Device(device) => {
+                    self.verbose_print(&format!("Source device: {:?}", device))
+                }
                 Source::Label(label) => self.verbose_print(&format!("Source label: {:?}", label)),
                 Source::UUID(uuid) => self.verbose_print(&format!("Source UUID: {:?}", uuid)),
             }
@@ -529,7 +712,13 @@ impl ConfigHandler{
     fn should_update_mtab(&self) -> bool {
         !self.config.no_mtab
     }
-    fn update_mtab(&self, source: &str, target: &str, fstype: &str, options: &str) -> Result<(), Box<dyn std::error::Error>> {
+    fn update_mtab(
+        &self,
+        source: &str,
+        target: &str,
+        fstype: &str,
+        options: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         if !self.should_update_mtab() {
             self.verbose_print("Skipping mtab update due to --no-mtab option");
             return Ok(());
@@ -539,8 +728,10 @@ impl ConfigHandler{
         // Here we should implement the logic to update /etc/mtab
         // Note: In modern systems, this is often not necessary as /etc/mtab is usually a symlink to /proc/self/mounts
         // But for completeness, we can add a simulated update operation
-        self.verbose_print(&format!("Would update /etc/mtab with: {} {} {} {}", source, target, fstype, options));
-
+        self.verbose_print(&format!(
+            "Would update /etc/mtab with: {} {} {} {}",
+            source, target, fstype, options
+        ));
         Ok(())
     }
     fn mount_all_filesystems(&self) -> Result<(), Box<dyn std::error::Error>> {
@@ -548,12 +739,12 @@ impl ConfigHandler{
         let fstab_path = "/etc/fstab";
         let fstab_file = parse_fstab(fstab_path).unwrap();
         // Implement logic to mount all filesystems
-        for line_vec in fstab_file{
-            let mut source = &line_vec[0];
-            let mount_source = Some(prepare_mount_source(source.as_str()).unwrap());
-            let mut target = &line_vec[1];
+        for line_vec in fstab_file {
+            let source = &line_vec[0];
+            let _mount_source = Some(prepare_mount_source(source.as_str()).unwrap());
+            let target = &line_vec[1];
             let fstype = line_vec[2].as_str().clone();
-            let flags = MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID;
+            let _flags = MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID;
             let fstab_options = &line_vec[3];
             if let Some(test_opts) = &self.config.options.test_opts {
                 if !self.match_test_opts(fstab_options, test_opts) {
@@ -561,12 +752,12 @@ impl ConfigHandler{
                     continue;
                 }
             }
-            if self.should_fork(){
-                match unsafe{fork()} {
-                    Ok(ForkResult::Parent {child}) => {
+            if self.should_fork() {
+                match unsafe { fork() } {
+                    Ok(ForkResult::Parent { child }) => {
                         // Parent process
                         println!("Forked child with PID: {}", child);
-                    },
+                    }
                     Ok(ForkResult::Child) => {
                         // Child process
                         if let Err(e) = self.mount_single_filesystem(source, target, fstype) {
@@ -574,10 +765,10 @@ impl ConfigHandler{
                             exit(1);
                         }
                         exit(0);
-                    },
+                    }
                     Err(e) => return Err(Box::new(e)),
                 }
-            }else {
+            } else {
                 if let Err(e) = self.mount_single_filesystem(source, target, fstype) {
                     eprintln!("Failed to mount {}: {}", source, e);
                 }
@@ -590,8 +781,8 @@ impl ConfigHandler{
 
             loop {
                 match waitpid(Pid::from_raw(-1), None) {
-                    Ok(WaitStatus::Exited(_, _)) => {},
-                    Ok(WaitStatus::Signaled(_, _, _)) => {},
+                    Ok(WaitStatus::Exited(_, _)) => {}
+                    Ok(WaitStatus::Signaled(_, _, _)) => {}
                     Ok(_) => continue,
                     Err(nix::errno::Errno::ECHILD) => break,
                     Err(e) => return Err(Box::new(e)),
@@ -606,7 +797,12 @@ impl ConfigHandler{
 
         test_opts_set.is_subset(&fstab_opts_set)
     }
-    fn mount_single_filesystem(&self, source: &str, target: &str, fstype: &str) -> Result<(), Box<dyn std::error::Error>> {
+    fn mount_single_filesystem(
+        &self,
+        source: &str,
+        target: &str,
+        fstype: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         self.verbose_print(&format!("Mount source: {}", source));
         self.verbose_print(&format!("Mount target: {}", target));
         let mount_source = Some(prepare_mount_source(source).unwrap());
@@ -618,14 +814,27 @@ impl ConfigHandler{
             return Ok(());
         }
         if is_swapfile(fstype) {
-            println!("Skipping mounting swap file!: {}, please use swapon to mount swap files!", source);
+            println!(
+                "Skipping mounting swap file!: {}, please use swapon to mount swap files!",
+                source
+            );
             return Ok(());
         }
 
         if self.is_fake_mode() {
-            self.verbose_print(&format!("FAKE: Would mount {} on {} with type {}", source, target, fstype));
+            self.verbose_print(&format!(
+                "FAKE: Would mount {} on {} with type {}",
+                source, target, fstype
+            ));
         } else {
-            mount_fs(mount_source.as_ref(), &target.to_string(), Some(fstype), flags, data,interal_only)?;
+            mount_fs(
+                mount_source.as_ref(),
+                &target.to_string(),
+                Some(fstype),
+                flags,
+                data,
+                interal_only,
+            )?;
             self.verbose_print(&format!("Mount successful: {} on {}", source, target));
             self.update_mtab(&mount_source.unwrap(), target, fstype, "")?;
         }
@@ -634,15 +843,17 @@ impl ConfigHandler{
     }
     fn use_alternative_fstab(&self, fstab: &OsString) -> Result<(), Box<dyn std::error::Error>> {
         self.verbose_print(&format!("Using alternative fstab: {:?}", fstab));
-        let fstab_path = fstab.to_str().ok_or_else(|| io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Invalid fstab path".to_string()
-        ))?;
+        let fstab_path = fstab.to_str().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Invalid fstab path".to_string(),
+            )
+        })?;
         let path = Path::new(fstab_path);
         if path.is_dir() {
             return Err(Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                format!("{:?} is a directory. Please specify a file.", path)
+                format!("{:?} is a directory. Please specify a file.", path),
             )));
         }
 
@@ -659,44 +870,58 @@ impl ConfigHandler{
                     self.mount_single_filesystem(&mount_source, target, fstype)?;
                 }
                 Ok(())
-            },
-            Err(e) => Err(Box::new(io::Error::new(io::ErrorKind::Other, e.to_string())))
+            }
+            Err(e) => Err(Box::new(io::Error::new(
+                io::ErrorKind::Other,
+                e.to_string(),
+            ))),
         }
     }
     fn perform_normal_mount(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.verbose_print("Performing normal mount");
         // Implement the logic of a normal mount
         let mount_source = match &self.config.source {
-            Some(Source::Device(dev)) => dev.to_str()
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid device path"))?.to_string(),
-
+            Some(Source::Device(dev)) => dev
+                .to_str()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid device path"))?
+                .to_string(),
             Some(Source::Label(label)) => {
-                let label_str = label.to_str()
+                let label_str = label
+                    .to_str()
                     .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid label"))?;
                 let dev = find_device_by_label(label_str)?;
                 dev
-            },
-
+            }
             Some(Source::UUID(uuid)) => {
-                let uuid_str = uuid.to_str()
+                let uuid_str = uuid
+                    .to_str()
                     .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid UUID"))?;
                 let dev = find_device_by_uuid(uuid_str)?;
                 dev
-            },
-
-            None => return Err(Box::new(io::Error::new(io::ErrorKind::InvalidInput, "No source specified"))),
+            }
+            None => {
+                return Err(Box::new(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "No source specified",
+                )))
+            }
         };
         self.verbose_print(&format!("Mount source: {}", mount_source));
-        let target = &self.config.target.as_ref().ok_or_else(||io::Error::new(io::ErrorKind::InvalidInput,"No target specified!"))?
-            .to_str().ok_or_else(||io::Error::new(io::ErrorKind::InvalidData,"Invalid target path!")).unwrap();
+        let target = &self
+            .config
+            .target
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "No target specified!"))?
+            .to_str()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid target path!"))
+            .unwrap();
         self.verbose_print(&format!("Mount target: {}", target));
-        let (flags,options) = self.parse_options()?;
+        let (flags, options) = self.parse_options()?;
         self.verbose_print(&format!("Mount flags: {:?}", flags));
         self.verbose_print(&format!("Mount options: {:?}", options));
-        let fstype = if let Some(t) = self.config.options.types.as_ref()
-            .and_then(|t|t.to_str()){
+        let fstype = if let Some(t) = self.config.options.types.as_ref().and_then(|t| t.to_str()) {
             Some(t.to_string())
-        }else {
+        } else {
             let output = std::process::Command::new("blkid")
                 .arg("-o")
                 .arg("value")
@@ -714,8 +939,14 @@ impl ConfigHandler{
         let data = None;
         let interal_only = self.use_internal_only();
         if self.is_fake_mode() {
-            self.verbose_print(&format!("FAKE: Would mount {} on {} with type {:?}, flags {:?}, and options {:?}",
-                                        mount_source, target, fstype.unwrap(), flags, options));
+            self.verbose_print(&format!(
+                "FAKE: Would mount {} on {} with type {:?}, flags {:?}, and options {:?}",
+                mount_source,
+                target,
+                fstype.unwrap(),
+                flags,
+                options
+            ));
         } else {
             if !is_already_mounted(*target).unwrap() {
                 let source = prepare_mount_source(&mount_source).unwrap();
@@ -739,10 +970,15 @@ impl ConfigHandler{
         Ok(())
     }
     fn convert_uresult<T>(result: UResult<T>) -> Result<T, Box<dyn std::error::Error>> {
-        result.map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())) as Box<dyn std::error::Error>)
+        result.map_err(|e| {
+            Box::new(io::Error::new(io::ErrorKind::Other, e.to_string()))
+                as Box<dyn std::error::Error>
+        })
     }
-
-    fn get_filesystem_label(&self, device: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    fn get_filesystem_label(
+        &self,
+        device: &str,
+    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
         let output = std::process::Command::new("blkid")
             .arg("-s")
             .arg("LABEL")
@@ -781,7 +1017,11 @@ impl ConfigHandler{
         }
 
         if let Some(options) = &self.config.options.options {
-            for option in options.to_str().ok_or("Invalid UTF-8 in options")?.split(',') {
+            for option in options
+                .to_str()
+                .ok_or("Invalid UTF-8 in options")?
+                .split(',')
+            {
                 match option {
                     "noexec" => flags |= MsFlags::MS_NOEXEC,
                     "nosuid" => flags |= MsFlags::MS_NOSUID,
@@ -816,8 +1056,12 @@ impl ConfigHandler{
             let _guard = scopeguard::guard(ns_file, |f| drop(f));
 
             unsafe {
-                setns(_guard.as_raw_fd(), CloneFlags::CLONE_NEWNS)
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to enter namespace: {}", e)))?;
+                setns(_guard.as_raw_fd(), CloneFlags::CLONE_NEWNS).map_err(|e| {
+                    io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("Failed to enter namespace: {}", e),
+                    )
+                })?;
             }
 
             self.verbose_print("Successfully entered the specified namespace");
@@ -829,23 +1073,38 @@ impl ConfigHandler{
         // Implement bind mount logic
         // Get source path
         let source = match &self.config.source {
-            Some(Source::Device(dev)) => dev.to_str()
+            Some(Source::Device(dev)) => dev
+                .to_str()
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid source path"))?,
-            _ => return Err(Box::new(io::Error::new(io::ErrorKind::InvalidInput, "Bind mount requires a source path"))),
+            _ => {
+                return Err(Box::new(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Bind mount requires a source path",
+                )))
+            }
         };
 
         // Get target path
-        let target = self.config.target.as_ref()
+        let target = self
+            .config
+            .target
+            .as_ref()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "No target specified"))?
             .to_str()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid target path"))?;
 
         // Check if source and target paths exist
         if !Path::new(source).exists() {
-            return Err(Box::new(io::Error::new(io::ErrorKind::NotFound, format!("Source path does not exist: {}", source))));
+            return Err(Box::new(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("Source path does not exist: {}", source),
+            )));
         }
         if !Path::new(target).exists() {
-            return Err(Box::new(io::Error::new(io::ErrorKind::NotFound, format!("Target path does not exist: {}", target))));
+            return Err(Box::new(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("Target path does not exist: {}", target),
+            )));
         }
 
         // Set bind mount flags
@@ -866,9 +1125,12 @@ impl ConfigHandler{
                 None, // Bind mount doesn't require filesystem type
                 flags,
                 None, // Bind mount doesn't need extra data
-                self.use_internal_only()
+                self.use_internal_only(),
             )?;
-            self.verbose_print(&format!("Successfully bind mounted {} to {}", source, target));
+            self.verbose_print(&format!(
+                "Successfully bind mounted {} to {}",
+                source, target
+            ));
         }
         Ok(())
     }
@@ -877,13 +1139,20 @@ impl ConfigHandler{
         self.verbose_print("Performing move mount operation");
         // Get source path
         let source = match &self.config.source {
-            Some(Source::Device(dev)) => dev.to_str().ok_or("Source device path contains invalid UTF-8 characters")?,
-            Some(Source::Label(_)) | Some(Source::UUID(_)) => return Err("Move operation doesn't support using labels or UUIDs".into()),
+            Some(Source::Device(dev)) => dev
+                .to_str()
+                .ok_or("Source device path contains invalid UTF-8 characters")?,
+            Some(Source::Label(_)) | Some(Source::UUID(_)) => {
+                return Err("Move operation doesn't support using labels or UUIDs".into())
+            }
             None => return Err("Move operation requires specifying a source mount point".into()),
         };
 
         // Get target path
-        let target = self.config.target.as_ref()
+        let target = self
+            .config
+            .target
+            .as_ref()
             .ok_or("Move operation requires specifying a target mount point")?
             .to_str()
             .ok_or("Target path contains invalid UTF-8 characters")?;
@@ -902,11 +1171,21 @@ impl ConfigHandler{
         }
         let interal_only = self.config.internal_only;
         // Perform move mount operation
-        match mount_fs(Some(&source.to_string()), &target.to_string(), None, MsFlags::MS_MOVE, None, interal_only) {
+        match mount_fs(
+            Some(&source.to_string()),
+            &target.to_string(),
+            None,
+            MsFlags::MS_MOVE,
+            None,
+            interal_only,
+        ) {
             Ok(_) => {
-                self.verbose_print(&format!("Successfully moved mount point from {} to {}", source, target));
+                self.verbose_print(&format!(
+                    "Successfully moved mount point from {} to {}",
+                    source, target
+                ));
                 Ok(())
-            },
+            }
             Err(e) => {
                 Err(format!("Move mount failed: {} -> {}, Error: {}", source, target, e).into())
             }
@@ -968,14 +1247,25 @@ impl ConfigHandler{
         self.change_mount_propagation(MsFlags::MS_UNBINDABLE, true, "recursively unbindable")
     }
 
-    fn change_mount_propagation(&self, flag: MsFlags, recursive: bool, prop_type: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let target = self.config.target.as_ref()
+    fn change_mount_propagation(
+        &self,
+        flag: MsFlags,
+        recursive: bool,
+        prop_type: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let target = self
+            .config
+            .target
+            .as_ref()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "No target specified"))?
             .to_str()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid target path"))?;
 
         if !Path::new(target).exists() {
-            return Err(Box::new(io::Error::new(io::ErrorKind::NotFound, format!("Target path does not exist: {}", target))));
+            return Err(Box::new(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("Target path does not exist: {}", target),
+            )));
         }
 
         let mut flags = flag;
@@ -984,7 +1274,10 @@ impl ConfigHandler{
         }
 
         if self.is_fake_mode() {
-            self.verbose_print(&format!("FAKE: Would change mount propagation of {} to {}", target, prop_type));
+            self.verbose_print(&format!(
+                "FAKE: Would change mount propagation of {} to {}",
+                target, prop_type
+            ));
         } else {
             mount_fs(
                 None,
@@ -992,9 +1285,12 @@ impl ConfigHandler{
                 None,
                 flags,
                 None,
-                self.use_internal_only()
+                self.use_internal_only(),
             )?;
-            self.verbose_print(&format!("Successfully changed mount propagation of {} to {}", target, prop_type));
+            self.verbose_print(&format!(
+                "Successfully changed mount propagation of {} to {}",
+                target, prop_type
+            ));
         }
 
         Ok(())
