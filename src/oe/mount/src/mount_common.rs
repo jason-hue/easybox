@@ -1054,13 +1054,12 @@ impl ConfigHandler {
 
             // Use scopeguard to ensure the file descriptor is properly closed
             let _guard = scopeguard::guard(ns_file, |f| drop(f));
-                setns(_guard.as_raw_fd(), CloneFlags::CLONE_NEWNS).map_err(|e| {
-                    io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("Failed to enter namespace: {}", e),
-                    )
-                })?;
-
+            setns(_guard.as_raw_fd(), CloneFlags::CLONE_NEWNS).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("Failed to enter namespace: {}", e),
+                )
+            })?;
             self.verbose_print("Successfully entered the specified namespace");
         }
         Ok(())
