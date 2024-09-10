@@ -4,8 +4,8 @@ use nix::mount::{umount, umount2, MntFlags};
 use nix::unistd::Uid;
 use std::path::Path;
 
-pub fn umount_fs<p: AsRef<Path>>(
-    target: p,
+pub fn umount_fs<P: AsRef<Path>>(
+    target: P,
     flags: MntFlags,
     internal_only: bool,
 ) -> nix::Result<()> {
@@ -27,7 +27,7 @@ pub fn umount_fs<p: AsRef<Path>>(
     }
 }
 
-fn internal_umount<p: AsRef<Path>>(target: &p, flags: MntFlags) -> nix::Result<()> {
+fn internal_umount<P: AsRef<Path>>(target: &P, flags: MntFlags) -> nix::Result<()> {
     let mut cmd = std::process::Command::new("umount");
 
     // Add flags

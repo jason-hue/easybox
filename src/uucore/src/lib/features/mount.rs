@@ -2,16 +2,15 @@ use crate::error::{UResult, USimpleError};
 use nix::errno::Errno;
 use nix::mount::{mount, MsFlags};
 use nix::unistd::Uid;
-use nix::NixPath;
 use regex::Regex;
 use std::fs::File;
 use std::io;
 use std::io::{BufRead, BufReader};
 use std::os::unix::fs::FileTypeExt;
 use std::path::Path;
-pub fn mount_fs<p: AsRef<Path>>(
-    source: Option<&p>,
-    target: &p,
+pub fn mount_fs<P: AsRef<Path>>(
+    source: Option<&P>,
+    target: &P,
     fs_type: Option<&str>,
     flags: MsFlags,
     data: Option<&str>,
@@ -30,7 +29,7 @@ pub fn mount_fs<p: AsRef<Path>>(
     } else {
         match result {
             Ok(_) => Ok(()),
-            /// Internal mount successful
+            //Internal mount successful
             Err(e) => {
                 eprintln!("Internal mount failed: {}. Attempting external mount...", e);
                 // Attempt external mount

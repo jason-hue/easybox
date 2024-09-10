@@ -6,7 +6,6 @@ use nix::unistd::{fork, ForkResult};
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs::File;
-use std::io::BufRead;
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use std::process::exit;
@@ -969,6 +968,7 @@ impl ConfigHandler {
         }
         Ok(())
     }
+    #[allow(dead_code)]
     fn convert_uresult<T>(result: UResult<T>) -> Result<T, Box<dyn std::error::Error>> {
         result.map_err(|e| {
             Box::new(io::Error::new(io::ErrorKind::Other, e.to_string()))
@@ -1054,15 +1054,12 @@ impl ConfigHandler {
 
             // Use scopeguard to ensure the file descriptor is properly closed
             let _guard = scopeguard::guard(ns_file, |f| drop(f));
-
-            unsafe {
                 setns(_guard.as_raw_fd(), CloneFlags::CLONE_NEWNS).map_err(|e| {
                     io::Error::new(
                         io::ErrorKind::Other,
                         format!("Failed to enter namespace: {}", e),
                     )
                 })?;
-            }
 
             self.verbose_print("Successfully entered the specified namespace");
         }
@@ -1191,7 +1188,7 @@ impl ConfigHandler {
             }
         }
     }
-
+    #[allow(dead_code)]
     fn perform_rbind_mount(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.verbose_print("Performing rbind mount");
         // Implement the logic of recursive binding mounting
