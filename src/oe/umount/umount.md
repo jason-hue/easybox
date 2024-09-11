@@ -9,4 +9,4 @@ umount [-hV]
 
 ## About
 
-Unmount the file system
+Unmount the file system.
