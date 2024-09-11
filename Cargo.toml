@@ -136,7 +136,7 @@ walkdir = "2.2.0"
 atty = "0.2.0"
 hex-literal = "0.3.1"
 lazy_static = "1.4.0"
-nix = { version="0.25.1", features=["user"]}
+nix = { version="0.27.1", features=["user"]}
 serial_test = "1.0.0"
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dev-dependencies]
