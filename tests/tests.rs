@@ -21,6 +21,10 @@ mod test_hwclock;
 #[path = "by-util/test_lspci.rs"]
 mod test_lspci;
 
+#[cfg(feature = "mount")]
+#[path = "by-util/test_mount.rs"]
+mod test_mount;
+
 #[cfg(feature = "pidof")]
 #[path = "by-util/test_pidof.rs"]
 mod test_pidof;
@@ -40,6 +44,10 @@ mod test_taskset;
 #[cfg(feature = "setsid")]
 #[path = "by-util/test_setsid.rs"]
 mod test_setsid;
+
+#[cfg(feature = "umount")]
+#[path = "by-util/test_umount.rs"]
+mod test_umount;
 
 #[cfg(feature = "usleep")]
 #[path = "by-util/test_usleep.rs"]
