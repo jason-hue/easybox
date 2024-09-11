@@ -195,7 +195,6 @@ fn test_mount_rbind() {
         .fails() // Assuming it fails because we're not root
         .stderr_contains("mount");
 }
-
 #[test]
 fn test_mount_make_shared() {
     new_ucmd!()
