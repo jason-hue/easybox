@@ -29,6 +29,10 @@ mod test_mount;
 #[path = "by-util/test_pidof.rs"]
 mod test_pidof;
 
+#[cfg(feature = "pgrep")]
+#[path = "by-util/test_pgrep.rs"]
+mod test_pgrep;
+
 #[cfg(feature = "pstree")]
 #[path = "by-util/test_pstree.rs"]
 mod test_pstree;
@@ -80,3 +84,7 @@ mod test_killall;
 #[cfg(feature = "md5sum")]
 #[path = "by-util/test_md5sum.rs"]
 mod test_md5sum;
+
+#[cfg(feature = "groupadd")]
+#[path = "by-util/test_groupadd.rs"]
+mod test_groupadd;
