@@ -77,6 +77,10 @@ mod test_column;
 #[path = "by-util/test_sha256sum.rs"]
 mod test_sha256sum;
 
+#[cfg(feature = "iostat")]
+#[path = "by-util/test_iostat.rs"]
+mod test_iostat;
+
 #[cfg(feature = "killall")]
 #[path = "by-util/test_killall.rs"]
 mod test_killall;
@@ -88,3 +92,15 @@ mod test_md5sum;
 #[cfg(feature = "groupadd")]
 #[path = "by-util/test_groupadd.rs"]
 mod test_groupadd;
+
+#[cfg(feature = "usermod")]
+#[path = "by-util/test_usermod.rs"]
+mod test_usermod;
+
+#[cfg(feature = "useradd")]
+#[path = "by-util/test_useradd.rs"]
+mod test_useradd;
+
+#[cfg(feature = "find")]
+#[path = "by-util/test_find.rs"]
+mod test_find;
