@@ -75,14 +75,14 @@ members = [
   "src/oe/iostat",
   "src/oe/sysctl",
   "src/oe/mount",
-  "src/oe/umount"
+  "src/oe/umount",
   "src/oe/pgrep",
   "src/oe/groupadd",
   "src/oe/usermod",
   "src/oe/useradd",
   "src/oe/find",
   "src/oe/login",
-  "src/oe/file",
+  "src/oe/file"
 ]
 
 [dependencies]
