@@ -506,8 +506,6 @@ pub fn mount_app<'a>(about: &'a str, usage: &'a str) -> Command<'a> {
             Some('N'),
             "Perform mount in another namespace",
         ),
-        (options::LABEL, Some('L'), "Synonym for LABEL=<label>"),
-        (options::UUID, Some('U'), "Synonym for UUID=<uuid>"),
     ] {
         let arg = Arg::new(*name)
             .long(*name)
@@ -564,6 +562,8 @@ pub fn mount_app<'a>(about: &'a str, usage: &'a str) -> Command<'a> {
             None,
             "Recursively mark an entire subtree as unbindable",
         ),
+        (options::LABEL, Some('L'), "Synonym for LABEL=<label>"),
+        (options::UUID, Some('U'), "Synonym for UUID=<uuid>"),
     ] {
         let arg = Arg::new(*name).long(*name).help(*help);
         cmd = cmd.arg(if let Some(s) = short {
@@ -964,6 +964,7 @@ impl ConfigHandler {
                     "relatime" => flags |= MsFlags::MS_RELATIME,
                     "strictatime" => flags |= MsFlags::MS_STRICTATIME,
                     "lazytime" => flags |= MsFlags::MS_LAZYTIME,
+                    "ro" => flags |= MsFlags::MS_RDONLY,
                     _ => data.push(option.to_string()),
                 }
             }

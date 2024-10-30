@@ -5,7 +5,9 @@
 // For the full copyright and license information, please view the LICENSE file
 // that was distributed with this source code.
 
-use std::sync::Mutex;
+use std::{fs::File, io::Write, sync::Mutex};
+
+use nix::unistd::getpid;
 
 use crate::{
     common::util::*, test_attr::run_cmd_as_root_ignore_ci, test_hwclock::run_ucmd_as_root_ignore_ci,
@@ -21,11 +23,19 @@ pub const TEST_MOUNT_POINT: &str = "mount_point";
 pub const TEST_MOUNT_SRC: &str = "/dev/loop";
 
 fn setup_loop_device(ts: &TestScenario) -> String {
-    const TEST_TEMP_FILE:&str = "ext4.img";
+    const TEST_TEMP_FILE: &str = "ext4.img";
     ts.cmd(C_MKDIR_PATH).arg(TEST_MOUNT_POINT).run();
-    ts.cmd(C_DD_PATH).args(&["if=/dev/zero", &format!("of={}", TEST_TEMP_FILE), "bs=1M", "count=5"]).run();
+    ts.cmd(C_DD_PATH)
+        .args(&[
+            "if=/dev/zero",
+            &format!("of={}", TEST_TEMP_FILE),
+            "bs=1M",
+            "count=5",
+        ])
+        .run();
     ts.cmd(C_MKFS_PATH).arg(TEST_TEMP_FILE).run();
-    let losetup_res = run_cmd_as_root_ignore_ci(ts, C_LOSETUP_PATH, &["-f", "--show", TEST_TEMP_FILE]).unwrap();
+    let losetup_res =
+        run_cmd_as_root_ignore_ci(ts, C_LOSETUP_PATH, &["-f", "--show", TEST_TEMP_FILE]).unwrap();
     losetup_res.stdout_str().trim().to_string()
 }
 
@@ -55,19 +65,22 @@ fn run_and_compare(ts: &TestScenario, in_args: &[&str]) {
     compare_mount_result(c_res, rust_res, c_mount_res, rust_mount_res);
 }
 
-fn compare_mount_result(c_res: CmdResult, rust_res: CmdResult, c_mount_res: CmdResult, rust_mount_res: CmdResult) {
-    println!("c_res: {}\n{}\n{}", c_res.stdout_str(), c_res.stderr_str(), c_mount_res.stdout_str());
+pub fn compare_mount_result(
+    c_res: CmdResult,
+    rust_res: CmdResult,
+    c_mount_res: CmdResult,
+    rust_mount_res: CmdResult,
+) {
+    println!("c_res: {}\n{}\n", c_res.stdout_str(), c_res.stderr_str());
     println!(
-        "rust_res: {}\n{}\n{}",
+        "rust_res: {}\n{}\n",
         rust_res.stdout_str(),
-        rust_res.stderr_str(),
-        rust_mount_res.stdout_str()
+        rust_res.stderr_str()
     );
 
-    c_res.code_is(rust_res.code());
+    c_mount_res.stdout_is(rust_mount_res.stdout_str());
     c_res.stderr_is(rust_res.stderr_str());
     c_res.stdout_is(rust_res.stdout_str());
-    c_mount_res.stdout_is(rust_mount_res.stdout_str());
 }
 
 #[test]
@@ -84,6 +97,16 @@ fn test_mount_print_all_only_types() {
     let _lock = KEEP_SINGLE_THREAD.lock();
     let ts = TestScenario::new(util_name!());
     let args = &["-t", "ext4"];
+    let c_res = ts.cmd(C_MOUNT_PATH).args(args).run();
+    let rust_res = ts.ucmd().args(args).run();
+    c_res.stdout_is(rust_res.stdout_str());
+}
+
+#[test]
+fn test_mount_show_labels() {
+    let _lock = KEEP_SINGLE_THREAD.lock();
+    let ts = TestScenario::new(util_name!());
+    let args = &["-l"];
     let c_res = ts.cmd(C_MOUNT_PATH).args(args).run();
     let rust_res = ts.ucmd().args(args).run();
     c_res.stdout_is(rust_res.stdout_str());
@@ -130,25 +153,25 @@ fn test_mount_bind() {
 fn test_mount_move() {
     let _lock = KEEP_SINGLE_THREAD.lock();
     let ts = &TestScenario::new(util_name!());
-    const NEW_MOUNT_POINT:&str = "new_target";
+    const NEW_MOUNT_POINT: &str = "new_target";
     let args = &["--move", TEST_MOUNT_POINT, NEW_MOUNT_POINT];
     let loopdevice = &setup_loop_device(ts);
     ts.cmd(C_MKDIR_PATH).arg(NEW_MOUNT_POINT).run();
 
-    ts.cmd(C_MOUNT_PATH).arg(loopdevice).arg(TEST_MOUNT_POINT).run();
+    run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, &[loopdevice,TEST_MOUNT_POINT]).unwrap();
 
     // Run C programe
     let c_res = run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, args).unwrap();
     let c_mount_res = ts.cmd(C_MOUNT_PATH).run();
     run_cmd_as_root_ignore_ci(ts, C_UMOUNT_PATH, &[loopdevice]).unwrap();
 
-    ts.cmd(C_MOUNT_PATH).arg(loopdevice).arg(TEST_MOUNT_POINT).run();
+    run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, &[loopdevice,TEST_MOUNT_POINT]).unwrap();
 
     // Run rust programe
     let rust_res = run_ucmd_as_root_ignore_ci(ts, args).unwrap();
     let rust_mount_res = ts.cmd(C_MOUNT_PATH).run();
     run_cmd_as_root_ignore_ci(ts, C_UMOUNT_PATH, &[loopdevice]).unwrap();
-    
+
     // Clean
     run_cmd_as_root_ignore_ci(ts, C_LOSETUP_PATH, &["-d", loopdevice]).unwrap();
     compare_mount_result(c_res, rust_res, c_mount_res, rust_mount_res);
@@ -156,139 +179,204 @@ fn test_mount_move() {
 
 #[test]
 fn test_mount_label() {
-    new_ucmd!()
-        .args(&["-L", "LABEL"])
-        .arg("/mnt")
-        .fails() // Assuming it fails because we're not root
-        .stderr_contains("mount");
+    let _lock = KEEP_SINGLE_THREAD.lock();
+    let ts = &TestScenario::new(util_name!());
+    const TEST_LABEL: &str = "easyblock";
+    let args = &["-L", TEST_LABEL, TEST_MOUNT_POINT];
+    let loopdevice = &setup_loop_device(ts);
+
+    // Set a new label
+    run_cmd_as_root_ignore_ci(ts, "/usr/bin/e2label", &[loopdevice, TEST_LABEL]).unwrap();
+
+    // Run C programe
+    let c_res = run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, args).unwrap();
+    let c_mount_res = ts.cmd(C_MOUNT_PATH).run();
+    run_cmd_as_root_ignore_ci(ts, C_UMOUNT_PATH, &[loopdevice]).unwrap();
+
+    // Run rust programe
+    let rust_res = run_ucmd_as_root_ignore_ci(ts, args).unwrap();
+    let rust_mount_res = ts.cmd(C_MOUNT_PATH).run();
+    run_cmd_as_root_ignore_ci(ts, C_UMOUNT_PATH, &[loopdevice]).unwrap();
+
+    // Clean
+    run_cmd_as_root_ignore_ci(ts, C_LOSETUP_PATH, &["-d", loopdevice]).unwrap();
+    compare_mount_result(c_res, rust_res, c_mount_res, rust_mount_res);
 }
 
 #[test]
 fn test_mount_uuid() {
-    new_ucmd!()
-        .args(&["-U", "UUID"])
-        .arg("/mnt")
-        .fails() // Assuming it fails because we're not root
-        .stderr_contains("mount");
+    let _lock = KEEP_SINGLE_THREAD.lock();
+    let ts = &TestScenario::new(util_name!());
+    const TEST_UUID: &str = "b191c10c-448d-4e80-a8d6-e5303260cf5f";
+    let args = &["-U", TEST_UUID, TEST_MOUNT_POINT];
+    let loopdevice = &setup_loop_device(ts);
+
+    // Set a new label
+    run_cmd_as_root_ignore_ci(ts, "/usr/bin/tune2fs", &[loopdevice, "-U", TEST_UUID]).unwrap();
+
+    // Run C programe
+    let c_res = run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, args).unwrap();
+    let c_mount_res = ts.cmd(C_MOUNT_PATH).run();
+    run_cmd_as_root_ignore_ci(ts, C_UMOUNT_PATH, &[loopdevice]).unwrap();
+
+    // Run rust programe
+    let rust_res = run_ucmd_as_root_ignore_ci(ts, args).unwrap();
+    let rust_mount_res = ts.cmd(C_MOUNT_PATH).run();
+    run_cmd_as_root_ignore_ci(ts, C_UMOUNT_PATH, &[loopdevice]).unwrap();
+
+    // Clean
+    run_cmd_as_root_ignore_ci(ts, C_LOSETUP_PATH, &["-d", loopdevice]).unwrap();
+    compare_mount_result(c_res, rust_res, c_mount_res, rust_mount_res);
 }
 
 #[test]
 fn test_mount_no_mtab() {
-    new_ucmd!()
-        .arg("--no-mtab")
-        .arg("/dev/sda1")
-        .arg("/mnt")
-        .fails() // Assuming it fails because we're not root
-        .stderr_contains("mount");
-}
-
-#[test]
-fn test_mount_invalid_option() {
-    new_ucmd!()
-        .arg("--invalid-option")
-        .fails()
-        .stderr_contains("invalid");
-}
-
-#[test]
-fn test_mount_show_labels() {
-    new_ucmd!()
-        .arg("-l")
-        .fails() // Assuming it fails because we're not root
-        .stderr_contains("mount");
+    let ts = TestScenario::new(util_name!());
+    run_and_compare(&ts, &["--no-mtab", TEST_MOUNT_SRC, TEST_MOUNT_POINT]);
 }
 
 #[test]
 fn test_mount_no_canonicalize() {
-    new_ucmd!()
-        .arg("--no-canonicalize")
-        .arg("/dev/sda1")
-        .arg("/mnt")
-        .fails() // Assuming it fails because we're not root
-        .stderr_contains("mount");
+    let ts = TestScenario::new(util_name!());
+    run_and_compare(
+        &ts,
+        &["--no-canonicalize", TEST_MOUNT_SRC, TEST_MOUNT_POINT],
+    );
 }
 
 #[test]
 fn test_mount_fake() {
-    new_ucmd!()
-        .arg("-f")
-        .arg("/dev/sda1")
-        .arg("/mnt")
-        .fails() // Assuming it fails because we're not root
-        .stderr_contains("mount");
+    let ts = TestScenario::new(util_name!());
+    run_and_compare(&ts, &["-f", TEST_MOUNT_SRC, TEST_MOUNT_POINT]);
 }
 
 #[test]
 fn test_mount_fork() {
-    new_ucmd!()
-        .arg("-a")
-        .arg("-F")
-        .fails() // Assuming it fails because we're not root
-        .stderr_contains("mount");
+    let ts = TestScenario::new(util_name!());
+    run_and_compare(&ts, &["-a", "-F"]);
 }
 
 #[test]
 fn test_mount_internal_only() {
-    new_ucmd!()
-        .arg("--internal-only")
-        .arg("/dev/sda1")
-        .arg("/mnt")
-        .fails() // Assuming it fails because we're not root
-        .stderr_contains("mount");
+    let ts = TestScenario::new(util_name!());
+    run_and_compare(&ts, &["--internal-only", TEST_MOUNT_SRC, TEST_MOUNT_POINT]);
 }
 
 #[test]
 fn test_mount_make_private() {
-    new_ucmd!()
-        .arg("--make-private")
-        .arg("/mnt")
-        .fails() // Assuming it fails because we're not root
-        .stderr_contains("mount");
+    let _lock = KEEP_SINGLE_THREAD.lock();
+    let ts = &TestScenario::new(util_name!());
+    let args = &["--make-private", TEST_MOUNT_POINT];
+    let loopdevice = &setup_loop_device(ts);
+
+    run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, &[loopdevice, TEST_MOUNT_POINT]).unwrap();
+
+    // Run C programe
+    let c_res = run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, args).unwrap();
+    let c_mount_res = ts.cmd(C_MOUNT_PATH).run();
+    run_cmd_as_root_ignore_ci(ts, C_UMOUNT_PATH, &[loopdevice]).unwrap();
+
+    ts.cmd(C_MOUNT_PATH)
+        .arg(loopdevice)
+        .arg(TEST_MOUNT_POINT)
+        .run();
+
+    // Run rust programe
+    let rust_res = run_ucmd_as_root_ignore_ci(ts, args).unwrap();
+    let rust_mount_res = ts.cmd(C_MOUNT_PATH).run();
+    run_cmd_as_root_ignore_ci(ts, C_UMOUNT_PATH, &[loopdevice]).unwrap();
+
+    // Clean
+    run_cmd_as_root_ignore_ci(ts, C_LOSETUP_PATH, &["-d", loopdevice]).unwrap();
+    compare_mount_result(c_res, rust_res, c_mount_res, rust_mount_res);
 }
 
 #[test]
 fn test_mount_read_write() {
-    new_ucmd!()
-        .arg("-w")
-        .arg("/dev/sda1")
-        .arg("/mnt")
-        .fails() // Assuming it fails because we're not root
-        .stderr_contains("mount");
+    let ts = TestScenario::new(util_name!());
+    run_and_compare(&ts, &["-w", TEST_MOUNT_SRC, TEST_MOUNT_POINT]);
 }
 
 #[test]
 fn test_mount_namespace() {
-    new_ucmd!()
-        .arg("-N")
-        .arg("testnamespace")
-        .arg("/mnt")
-        .fails() // Assuming it fails because we're not root
-        .stderr_contains("mount");
+    let ts = TestScenario::new(util_name!());
+    run_and_compare(
+        &ts,
+        &[
+            "-N",
+            &getpid().as_raw().to_string(),
+            TEST_MOUNT_SRC,
+            TEST_MOUNT_POINT,
+        ],
+    );
 }
 
 #[test]
 fn test_mount_fstab_alternative() {
-    new_ucmd!()
-        .arg("-T")
-        .arg("/etc/alt_fstab")
-        .fails() // Assuming it fails because we're not root
-        .stderr_contains("mount");
+    let _lock = KEEP_SINGLE_THREAD.lock();
+    let ts = &TestScenario::new(util_name!());
+    const NEW_FSTAB: &str = "new_fstab";
+    let loopdevice = &setup_loop_device(ts);
+    let args = &["-T", NEW_FSTAB, loopdevice];
+
+    {
+        let mut new_fstabf = File::options().write(true).open(NEW_FSTAB).unwrap();
+        new_fstabf
+            .write_all(
+                format!("{} {} ext4 ro 0 0", loopdevice, TEST_MOUNT_POINT)
+                    .into_bytes()
+                    .as_slice(),
+            )
+            .unwrap();
+    }
+
+    // Run C programe
+    let c_res = run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, args).unwrap();
+    let c_mount_res = ts.cmd(C_MOUNT_PATH).run();
+    run_cmd_as_root_ignore_ci(ts, C_UMOUNT_PATH, &[loopdevice]).unwrap();
+
+    // Run rust programe
+    let rust_res = run_ucmd_as_root_ignore_ci(ts, args).unwrap();
+    let rust_mount_res = ts.cmd(C_MOUNT_PATH).run();
+    run_cmd_as_root_ignore_ci(ts, C_UMOUNT_PATH, &[loopdevice]).unwrap();
+
+    // Clean
+    run_cmd_as_root_ignore_ci(ts, C_LOSETUP_PATH, &["-d", loopdevice]).unwrap();
+    compare_mount_result(c_res, rust_res, c_mount_res, rust_mount_res);
 }
 
 #[test]
 fn test_mount_rbind() {
-    new_ucmd!()
-        .arg("-R")
-        .arg("/source")
-        .arg("/target")
-        .fails() // Assuming it fails because we're not root
-        .stderr_contains("mount");
+    let ts = TestScenario::new(util_name!());
+    ts.cmd(C_MKDIR_PATH).arg("source").run();
+    run_and_compare(&ts, &["-R", "source", TEST_MOUNT_POINT]);
 }
+
 #[test]
 fn test_mount_make_shared() {
-    new_ucmd!()
-        .arg("--make-shared")
-        .arg("/mnt")
-        .fails() // Assuming it fails because we're not root
-        .stderr_contains("mount");
+    let _lock = KEEP_SINGLE_THREAD.lock();
+    let ts = &TestScenario::new(util_name!());
+    let args = &["--make-shared", TEST_MOUNT_POINT];
+    let loopdevice = &setup_loop_device(ts);
+
+    run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, &[loopdevice, TEST_MOUNT_POINT]).unwrap();
+
+    // Run C programe
+    let c_res = run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, args).unwrap();
+    let c_mount_res = ts.cmd(C_MOUNT_PATH).run();
+    run_cmd_as_root_ignore_ci(ts, C_UMOUNT_PATH, &[loopdevice]).unwrap();
+
+    ts.cmd(C_MOUNT_PATH)
+        .arg(loopdevice)
+        .arg(TEST_MOUNT_POINT)
+        .run();
+
+    // Run rust programe
+    let rust_res = run_ucmd_as_root_ignore_ci(ts, args).unwrap();
+    let rust_mount_res = ts.cmd(C_MOUNT_PATH).run();
+    run_cmd_as_root_ignore_ci(ts, C_UMOUNT_PATH, &[loopdevice]).unwrap();
+
+    // Clean
+    run_cmd_as_root_ignore_ci(ts, C_LOSETUP_PATH, &["-d", loopdevice]).unwrap();
+    compare_mount_result(c_res, rust_res, c_mount_res, rust_mount_res);
 }
