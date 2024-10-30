@@ -22,7 +22,7 @@ pub const C_LOSETUP_PATH: &str = "/usr/bin/losetup";
 pub const TEST_MOUNT_POINT: &str = "mount_point";
 pub const TEST_MOUNT_SRC: &str = "/dev/loop";
 
-fn setup_loop_device(ts: &TestScenario) -> String {
+pub fn setup_loop_device(ts: &TestScenario) -> String {
     const TEST_TEMP_FILE: &str = "ext4.img";
     ts.cmd(C_MKDIR_PATH).arg(TEST_MOUNT_POINT).run();
     ts.cmd(C_DD_PATH)
@@ -37,6 +37,24 @@ fn setup_loop_device(ts: &TestScenario) -> String {
     let losetup_res =
         run_cmd_as_root_ignore_ci(ts, C_LOSETUP_PATH, &["-f", "--show", TEST_TEMP_FILE]).unwrap();
     losetup_res.stdout_str().trim().to_string()
+}
+
+pub fn compare_mount_result(
+    c_res: CmdResult,
+    rust_res: CmdResult,
+    c_mount_res: CmdResult,
+    rust_mount_res: CmdResult,
+) {
+    println!("c_res: {}\n{}\n", c_res.stdout_str(), c_res.stderr_str());
+    println!(
+        "rust_res: {}\n{}\n",
+        rust_res.stdout_str(),
+        rust_res.stderr_str()
+    );
+
+    c_mount_res.stdout_is(rust_mount_res.stdout_str());
+    c_res.stderr_is(rust_res.stderr_str());
+    c_res.stdout_is(rust_res.stdout_str());
 }
 
 fn run_and_compare(ts: &TestScenario, in_args: &[&str]) {
@@ -63,24 +81,6 @@ fn run_and_compare(ts: &TestScenario, in_args: &[&str]) {
     run_cmd_as_root_ignore_ci(ts, C_LOSETUP_PATH, &["-d", loopdevice]).unwrap();
 
     compare_mount_result(c_res, rust_res, c_mount_res, rust_mount_res);
-}
-
-pub fn compare_mount_result(
-    c_res: CmdResult,
-    rust_res: CmdResult,
-    c_mount_res: CmdResult,
-    rust_mount_res: CmdResult,
-) {
-    println!("c_res: {}\n{}\n", c_res.stdout_str(), c_res.stderr_str());
-    println!(
-        "rust_res: {}\n{}\n",
-        rust_res.stdout_str(),
-        rust_res.stderr_str()
-    );
-
-    c_mount_res.stdout_is(rust_mount_res.stdout_str());
-    c_res.stderr_is(rust_res.stderr_str());
-    c_res.stdout_is(rust_res.stdout_str());
 }
 
 #[test]
@@ -159,8 +159,16 @@ fn test_mount_move() {
     let loopdevice = &setup_loop_device(ts);
 
     // Prepare
-    run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, &["-B","--make-private", TEST_MOUNT_POINT, TEST_MOUNT_POINT]).unwrap();
-    ts.cmd(C_MKDIR_PATH).arg(NEW_MOUNT_POINT_A).arg(NEW_MOUNT_POINT_B).run();
+    run_cmd_as_root_ignore_ci(
+        ts,
+        C_MOUNT_PATH,
+        &["-B", "--make-private", TEST_MOUNT_POINT, TEST_MOUNT_POINT],
+    )
+    .unwrap();
+    ts.cmd(C_MKDIR_PATH)
+        .arg(NEW_MOUNT_POINT_A)
+        .arg(NEW_MOUNT_POINT_B)
+        .run();
     run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, &[loopdevice, NEW_MOUNT_POINT_A]).unwrap();
 
     // Run C programe
@@ -168,7 +176,7 @@ fn test_mount_move() {
     let c_mount_res = ts.cmd(C_MOUNT_PATH).run();
     run_cmd_as_root_ignore_ci(ts, C_UMOUNT_PATH, &[loopdevice]).unwrap();
 
-    run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, &[loopdevice,NEW_MOUNT_POINT_A]).unwrap();
+    run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, &[loopdevice, NEW_MOUNT_POINT_A]).unwrap();
 
     // Run rust programe
     let rust_res = run_ucmd_as_root_ignore_ci(ts, args).unwrap();
@@ -322,7 +330,12 @@ fn test_mount_fstab_alternative() {
     let loopdevice = &setup_loop_device(ts);
     let args = &["-T", NEW_FSTAB, loopdevice];
 
-    ts.cmd("/usr/bin/tee").arg(NEW_FSTAB).run_piped_stdin(format!("{} {} ext4 rw,nosuid,noexec,relatime 0 0\n", loopdevice, TEST_MOUNT_POINT));
+    ts.cmd("/usr/bin/tee")
+        .arg(NEW_FSTAB)
+        .run_piped_stdin(format!(
+            "{} {} ext4 rw,nosuid,noexec,relatime 0 0\n",
+            loopdevice, TEST_MOUNT_POINT
+        ));
 
     // Run C programe
     let c_res = run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, args).unwrap();

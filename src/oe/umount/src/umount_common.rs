@@ -19,6 +19,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use uucore::error::{UResult, USimpleError};
 use uucore::format_usage;
+use uucore::mount::is_mount_point;
 use uucore::umount::umount_fs;
 ///
 pub static BASE_CMD_PARSE_ERROR: i32 = 1;
@@ -255,7 +256,9 @@ impl UmountHandler {
     pub fn process(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.handle_namespace()?;
         self.handle_basic_options()?;
-        self.handle_umount_options()?;
+        if self.config.all_targets {
+            return Ok(());
+        }
         self.handle_target()?;
         Ok(())
     }
@@ -272,31 +275,8 @@ impl UmountHandler {
     fn handle_basic_options(&self) -> Result<(), Box<dyn std::error::Error>> {
         if self.config.all {
             self.umount_all_filesystems()?;
-        }
-        if self.config.all_targets {
+        } else if self.config.all_targets {
             self.umount_all_targets()?;
-        }
-        if self.config.no_canonicalize {
-            self.verbose_print("Path canonicalization disabled");
-        }
-        if self.config.fake {
-            self.verbose_print("Running in fake mode - no actual unmounting will occur");
-        }
-        Ok(())
-    }
-
-    fn handle_umount_options(&self) -> Result<(), Box<dyn std::error::Error>> {
-        if self.config.force {
-            self.verbose_print("Force unmount enabled");
-        }
-        if self.config.lazy {
-            self.verbose_print("Lazy unmount enabled");
-        }
-        if self.config.recursive {
-            self.verbose_print("Recursive unmount enabled");
-        }
-        if self.config.read_only {
-            self.verbose_print("Read-only remount on failure enabled");
         }
         Ok(())
     }
@@ -337,6 +317,16 @@ impl UmountHandler {
             }
 
             for mount_point in mounted {
+                let mut is_skiped = false;
+                for i in ["/dev/pts", "/sys", "/proc"] {
+                    if mount_point.trim() == i {
+                        is_skiped = true;
+                        break;
+                    }
+                }
+                if is_skiped {
+                    continue;
+                }
                 self.umount_single_target(mount_point)?;
             }
         }
@@ -400,12 +390,6 @@ impl UmountHandler {
             let fields: Vec<&str> = line.split_whitespace().collect();
             if fields.len() >= 2 && fields[0] == device_to_unmount {
                 let mount_point = fields[1];
-                self.verbose_print(&format!(
-                    "Unmounting target: {} for device: {:?}",
-                    mount_point,
-                    device_to_unmount.to_str()
-                ));
-
                 if !self.config.fake {
                     self.umount_single_target(mount_point)?;
                 }
@@ -416,13 +400,9 @@ impl UmountHandler {
     }
 
     fn umount_single_target(&self, target: &str) -> Result<(), Box<dyn std::error::Error>> {
-        self.verbose_print(&format!("Unmounting target: {:?}", target));
         // Implement logic to unmount a single target
         let loop_device = self.get_loop_device(target);
         if !self.config.fake {
-            if !nix::unistd::geteuid().is_root() {
-                return Err("Root privileges are required to unmount filesystems".into());
-            }
             // Use the umount_fs function to actually perform the unmount operation
             let result = if self.config.force || self.config.lazy {
                 let mut flags = MntFlags::empty();
@@ -439,7 +419,11 @@ impl UmountHandler {
             };
             match result {
                 Ok(_) => {
-                    self.verbose_print(&format!("Successfully unmounted {}", target));
+                    self.verbose_print(&format!(
+                        "{} ({}) unmounted",
+                        target,
+                        loop_device.as_deref().unwrap_or_default()
+                    ));
                     if self.config.detach_loop {
                         if let Ok(device) = loop_device {
                             match self.detach_loop_device(&device) {
@@ -479,16 +463,18 @@ impl UmountHandler {
 
     fn verbose_print(&self, message: &str) {
         if self.config.verbose && !self.config.quiet {
-            println!("umount: {}", message);
+            eprintln!("umount: {}", message);
         }
     }
 
     fn enter_namespace(&self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(ns) = &self.config.namespace {
             self.verbose_print(&format!("Entering namespace: {:?}", ns));
-
-            let ns_file =
-                File::open(ns).map_err(|e| format!("Failed to open namespace file: {}", e))?;
+            let res = File::open(ns);
+            if res.is_err() {
+                return Ok(());
+            }
+            let ns_file = res.unwrap();
             let _guard = scopeguard::guard(ns_file, |f| drop(f));
             setns(_guard.as_raw_fd(), CloneFlags::CLONE_NEWNS)
                 .map_err(|e| format!("Failed to enter namespace: {}", e))?;
@@ -514,10 +500,6 @@ impl UmountHandler {
         Ok(())
     }
     fn get_loop_device(&self, target: &str) -> Result<String, Box<dyn std::error::Error>> {
-        self.verbose_print(&format!(
-            "Attempting to find loop device for target: {}",
-            target
-        ));
         let target_path = Path::new(target).canonicalize()?;
         // Method 1: Check /proc/mounts
         let mounts = fs::read_to_string("/proc/mounts")?;
@@ -528,10 +510,6 @@ impl UmountHandler {
                     .canonicalize()
                     .unwrap_or_else(|_| Path::new(fields[1]).to_path_buf());
                 if mount_point == target_path && fields[0].starts_with("/dev/loop") {
-                    self.verbose_print(&format!(
-                        "Found loop device in /proc/mounts: {}",
-                        fields[0]
-                    ));
                     return Ok(fields[0].to_string());
                 }
             }
@@ -587,14 +565,14 @@ impl UmountHandler {
                 }
             }
         }
-        self.umount_single_target(target)
+        if is_mount_point(target) {
+            return self.umount_single_target(target);
+        }
+        Ok(())
     }
 
     fn update_mtab(&self, target: &str) -> Result<(), Box<dyn std::error::Error>> {
-        self.verbose_print(&format!("Updating /etc/mtab, removing {}", target));
-
         if fs::symlink_metadata("/etc/mtab")?.file_type().is_symlink() {
-            self.verbose_print("/etc/mtab is a symlink, no update needed");
             return Ok(());
         }
 

@@ -4,11 +4,15 @@ use nix::mount::{umount, umount2, MntFlags};
 use nix::unistd::Uid;
 use std::path::Path;
 ///
-pub fn umount_fs<P: AsRef<Path>>(
+pub fn umount_fs<P: AsRef<Path> + std::fmt::Display>(
     target: P,
     flags: MntFlags,
     internal_only: bool,
 ) -> nix::Result<()> {
+    if !nix::unistd::geteuid().is_root() {
+        eprintln!("umount: {}: must be superuser to unmount.", target);
+        return Ok(());
+    }
     let result = if flags == MntFlags::empty() {
         umount(target.as_ref())
     } else {
