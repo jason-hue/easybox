@@ -5,7 +5,7 @@
 // For the full copyright and license information, please view the LICENSE file
 // that was distributed with this source code.
 
-use std::{fs::File, io::Write, sync::Mutex};
+use std::sync::Mutex;
 
 use nix::unistd::getpid;
 
@@ -153,19 +153,22 @@ fn test_mount_bind() {
 fn test_mount_move() {
     let _lock = KEEP_SINGLE_THREAD.lock();
     let ts = &TestScenario::new(util_name!());
-    const NEW_MOUNT_POINT: &str = "new_target";
-    let args = &["--move", TEST_MOUNT_POINT, NEW_MOUNT_POINT];
+    const NEW_MOUNT_POINT_A: &str = "mount_point/new_target_a";
+    const NEW_MOUNT_POINT_B: &str = "mount_point/new_target_b";
+    let args = &["--move", NEW_MOUNT_POINT_A, NEW_MOUNT_POINT_B];
     let loopdevice = &setup_loop_device(ts);
-    ts.cmd(C_MKDIR_PATH).arg(NEW_MOUNT_POINT).run();
 
-    run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, &[loopdevice,TEST_MOUNT_POINT]).unwrap();
+    // Prepare
+    run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, &["-B","--make-private", TEST_MOUNT_POINT, TEST_MOUNT_POINT]).unwrap();
+    ts.cmd(C_MKDIR_PATH).arg(NEW_MOUNT_POINT_A).arg(NEW_MOUNT_POINT_B).run();
+    run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, &[loopdevice, NEW_MOUNT_POINT_A]).unwrap();
 
     // Run C programe
     let c_res = run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, args).unwrap();
     let c_mount_res = ts.cmd(C_MOUNT_PATH).run();
     run_cmd_as_root_ignore_ci(ts, C_UMOUNT_PATH, &[loopdevice]).unwrap();
 
-    run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, &[loopdevice,TEST_MOUNT_POINT]).unwrap();
+    run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, &[loopdevice,NEW_MOUNT_POINT_A]).unwrap();
 
     // Run rust programe
     let rust_res = run_ucmd_as_root_ignore_ci(ts, args).unwrap();
@@ -174,6 +177,7 @@ fn test_mount_move() {
 
     // Clean
     run_cmd_as_root_ignore_ci(ts, C_LOSETUP_PATH, &["-d", loopdevice]).unwrap();
+    run_cmd_as_root_ignore_ci(ts, C_UMOUNT_PATH, &[TEST_MOUNT_POINT]).unwrap();
     compare_mount_result(c_res, rust_res, c_mount_res, rust_mount_res);
 }
 
@@ -276,10 +280,7 @@ fn test_mount_make_private() {
     let c_mount_res = ts.cmd(C_MOUNT_PATH).run();
     run_cmd_as_root_ignore_ci(ts, C_UMOUNT_PATH, &[loopdevice]).unwrap();
 
-    ts.cmd(C_MOUNT_PATH)
-        .arg(loopdevice)
-        .arg(TEST_MOUNT_POINT)
-        .run();
+    run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, &[loopdevice, TEST_MOUNT_POINT]).unwrap();
 
     // Run rust programe
     let rust_res = run_ucmd_as_root_ignore_ci(ts, args).unwrap();
@@ -300,13 +301,15 @@ fn test_mount_read_write() {
 #[test]
 fn test_mount_namespace() {
     let ts = TestScenario::new(util_name!());
+    let res = ts.cmd("/usr/bin/realpath").arg(TEST_MOUNT_POINT).run();
+    let realpath = res.stdout_str().trim();
     run_and_compare(
         &ts,
         &[
             "-N",
             &getpid().as_raw().to_string(),
             TEST_MOUNT_SRC,
-            TEST_MOUNT_POINT,
+            realpath,
         ],
     );
 }
@@ -319,16 +322,7 @@ fn test_mount_fstab_alternative() {
     let loopdevice = &setup_loop_device(ts);
     let args = &["-T", NEW_FSTAB, loopdevice];
 
-    {
-        let mut new_fstabf = File::options().write(true).open(NEW_FSTAB).unwrap();
-        new_fstabf
-            .write_all(
-                format!("{} {} ext4 ro 0 0", loopdevice, TEST_MOUNT_POINT)
-                    .into_bytes()
-                    .as_slice(),
-            )
-            .unwrap();
-    }
+    ts.cmd("/usr/bin/tee").arg(NEW_FSTAB).run_piped_stdin(format!("{} {} ext4 rw,nosuid,noexec,relatime 0 0\n", loopdevice, TEST_MOUNT_POINT));
 
     // Run C programe
     let c_res = run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, args).unwrap();
@@ -366,10 +360,7 @@ fn test_mount_make_shared() {
     let c_mount_res = ts.cmd(C_MOUNT_PATH).run();
     run_cmd_as_root_ignore_ci(ts, C_UMOUNT_PATH, &[loopdevice]).unwrap();
 
-    ts.cmd(C_MOUNT_PATH)
-        .arg(loopdevice)
-        .arg(TEST_MOUNT_POINT)
-        .run();
+    run_cmd_as_root_ignore_ci(ts, C_MOUNT_PATH, &[loopdevice, TEST_MOUNT_POINT]).unwrap();
 
     // Run rust programe
     let rust_res = run_ucmd_as_root_ignore_ci(ts, args).unwrap();

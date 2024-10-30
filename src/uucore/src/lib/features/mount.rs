@@ -224,7 +224,6 @@ pub fn find_device_by_uuid(uuid: &str) -> Result<String, Box<dyn std::error::Err
 
     if output.status.success() {
         let device = String::from_utf8(output.stdout)?.trim().to_string();
-        println!("UUID parsed successfully!");
         Ok(device)
     } else {
         Err(io::Error::new(io::ErrorKind::NotFound, "Not found device by uuid").into())

@@ -338,16 +338,18 @@ impl Config {
     }
 
     fn parse_source(options: &clap::ArgMatches) -> Option<Source> {
-        if let Some(label) = options.value_of_os(options::LABEL) {
-            Some(Source::Label(label.to_owned()))
-        } else if let Some(uuid) = options.value_of_os(options::UUID) {
-            Some(Source::UUID(uuid.to_owned()))
-        } else {
-            options
-                .value_of_os(options::DEVICE)
-                .or_else(|| options.value_of_os(options::SOURCE))
-                .map(|device| Source::Device(device.to_owned()))
-        }
+        options
+            .value_of_os(options::DEVICE)
+            .or_else(|| options.value_of_os(options::SOURCE))
+            .map(|device| {
+                if options.contains_id(options::LABEL) {
+                    Source::Label(device.to_owned())
+                } else if options.contains_id(options::UUID) {
+                    Source::UUID(device.to_owned())
+                } else {
+                    Source::Device(device.to_owned())
+                }
+            })
     }
 
     fn parse_operation(options: &clap::ArgMatches) -> Operation {
@@ -592,12 +594,7 @@ pub fn mount_app<'a>(about: &'a str, usage: &'a str) -> Command<'a> {
         )
         .group(
             ArgGroup::new("source_operation")
-                .args(&[
-                    options::LABEL,
-                    options::UUID,
-                    options::DEVICE,
-                    options::SOURCE,
-                ])
+                .args(&[options::DEVICE, options::SOURCE])
                 .required(false),
         )
         .group(
@@ -681,7 +678,11 @@ impl ConfigHandler {
         // Implement logic to mount all filesystems
         for line_vec in fstab_file {
             let source = &line_vec[0];
-            let _mount_source = Some(prepare_mount_source(source.as_str()).unwrap());
+            let prepare_mount_source_res = prepare_mount_source(&source);
+            if prepare_mount_source_res.is_err() {
+                continue;
+            }
+            let _mount_source = Some(prepare_mount_source_res.unwrap());
             let target = &line_vec[1];
             let fstype = line_vec[2].as_str().clone();
             let _flags = MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID;
@@ -810,8 +811,8 @@ impl ConfigHandler {
     }
     fn perform_normal_mount(&self) -> Result<(), Box<dyn std::error::Error>> {
         // Implement the logic of a normal mount
-        if self.config.source.is_none() {
-            if self.config.target.is_none() && !self.config.all {
+        if self.config.source.is_none() && !self.config.all {
+            if self.config.target.is_none() {
                 self.print_all()?;
                 return Ok(());
             }
@@ -841,6 +842,9 @@ impl ConfigHandler {
             }
             None => String::default(),
         };
+        if self.config.target.is_none() {
+            return Ok(());
+        }
         let target = &self
             .config
             .target
@@ -982,7 +986,11 @@ impl ConfigHandler {
         if let Some(ns) = &self.config.namespace {
             self.verbose_print(&format!("Entering namespace: {:?}", ns));
 
-            let ns_file = File::open(ns)?;
+            let res = File::open(ns);
+            if res.is_err() {
+                return Ok(());
+            }
+            let ns_file = res.unwrap();
 
             // Use scopeguard to ensure the file descriptor is properly closed
             let _guard = scopeguard::guard(ns_file, |f| drop(f));
