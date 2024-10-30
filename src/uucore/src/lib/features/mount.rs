@@ -4,13 +4,14 @@
 //
 // For the full copyright and license information, please view the LICENSE file
 // that was distributed with this source code.
+
 use crate::error::{UResult, USimpleError};
 use nix::errno::Errno;
 use nix::mount::{mount, MsFlags};
 use nix::unistd::Uid;
 use regex::Regex;
 use std::fs::File;
-use std::io;
+use std::io::{self};
 use std::io::{BufRead, BufReader};
 use std::os::unix::fs::FileTypeExt;
 use std::path::Path;
@@ -121,7 +122,7 @@ pub fn prepare_mount_source(source: &str) -> UResult<String> {
                 .to_string(),
             ))
         } else {
-            String::from_utf8(output.stdout)
+             String::from_utf8(output.stdout)
                 .map_err(|e| {
                     USimpleError::new(1, format!("Failed to parse loop device path: {}", e))
                 })

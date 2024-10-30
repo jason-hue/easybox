@@ -1,3 +1,10 @@
+//! This file is part of the easybox package.
+//
+// (c) Zhenghang <2113130664@qq.com>
+//
+// For the full copyright and license information, please view the LICENSE file
+// that was distributed with this source code.
+
 use clap::{crate_version, Arg, ArgGroup, Command};
 use nix::mount::MsFlags;
 use nix::sched::{setns, CloneFlags};
@@ -6,6 +13,7 @@ use nix::unistd::{fork, ForkResult};
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs::File;
+use std::io::{BufRead, BufReader, Read};
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use std::process::exit;
@@ -369,12 +377,6 @@ impl Config {
             Operation::Normal
         }
     }
-    // pub fn get_device_path(&self) -> Option<&str> {
-    //     match &self.source {
-    //         Some(Source::Device(device)) => Some(device.to_str().unwrap()),
-    //         _ => None,
-    //     }
-    // }
 }
 /// Parse arguments and populate Config struct
 pub fn parse_mount_cmd_args(args: impl uucore::Args, about: &str, usage: &str) -> UResult<Config> {
@@ -628,8 +630,6 @@ impl ConfigHandler {
     pub fn process(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.handle_namespace()?;
         self.handle_basic_options()?;
-        self.handle_mount_options()?;
-        self.handle_source_and_target()?;
         self.handle_operation()?;
         Ok(())
     }
@@ -637,88 +637,14 @@ impl ConfigHandler {
         if self.config.all {
             self.mount_all_filesystems()?;
         }
-        if self.config.no_canonicalize {
-            self.verbose_print("Path canonicalization disabled");
-        }
-        if self.config.fake {
-            self.verbose_print("Running in fake mode - no actual mounting will occur");
-        }
-        if self.config.fork {
-            self.verbose_print("Forking enabled for each device");
-        }
         if let Some(fstab) = &self.config.fstab {
             self.use_alternative_fstab(fstab)?;
         }
-        if self.config.internal_only {
-            self.verbose_print("Using internal mount helpers only");
-        }
-        if self.config.show_labels {
-            self.verbose_print("Filesystem labels will be displayed");
-        }
-        if self.config.no_mtab {
-            self.verbose_print("/etc/mtab will not be updated");
-        }
-        if self.config.verbose {
-            self.verbose_print("Verbose mode enabled");
-        }
-        Ok(())
-    }
-    fn handle_mount_options(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let options = &self.config.options;
-
-        if let Some(mode) = &options.mode {
-            println!("Options mode: {:?}", mode);
-        }
-        if let Some(source) = &options.source {
-            println!("Options source: {:?}", source);
-        }
-        if options.source_force {
-            println!("Forcing use of options from fstab/mtab");
-        }
-        if let Some(opts) = &options.options {
-            println!("Mount options: {:?}", opts);
-        }
-        if let Some(test_opts) = &options.test_opts {
-            println!("Test options: {:?}", test_opts);
-        }
-        if options.read_only {
-            println!("Mounting read-only");
-        }
-        if options.read_write {
-            println!("Mounting read-write");
-        }
-        if let Some(types) = &options.types {
-            println!("Filesystem types: {:?}", types);
-        }
-
-        Ok(())
-    }
-
-    fn handle_source_and_target(&self) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(source) = &self.config.source {
-            match source {
-                Source::Device(device) => {
-                    self.verbose_print(&format!("Source device: {:?}", device))
-                }
-                Source::Label(label) => self.verbose_print(&format!("Source label: {:?}", label)),
-                Source::UUID(uuid) => self.verbose_print(&format!("Source UUID: {:?}", uuid)),
-            }
-        }
-
-        if let Some(target) = &self.config.target {
-            self.verbose_print(&format!("Mount target: {:?}", target));
-        }
-
-        if let Some(prefix) = &self.config.target_prefix {
-            self.verbose_print(&format!("Target prefix: {:?}", prefix));
-        }
-
         Ok(())
     }
 
     fn handle_namespace(&self) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(ns) = &self.config.namespace {
-            self.verbose_print(&format!("Using namespace: {:?}", ns));
+        if self.config.namespace.is_some() {
             self.enter_namespace()?;
         }
         Ok(())
@@ -745,33 +671,8 @@ impl ConfigHandler {
     // Ancillary methods
     fn verbose_print(&self, message: &str) {
         if self.config.verbose {
-            println!("VERBOSE: {}", message);
+            println!("mount: {}", message);
         }
-    }
-    fn should_update_mtab(&self) -> bool {
-        !self.config.no_mtab
-    }
-    fn update_mtab(
-        &self,
-        source: &str,
-        target: &str,
-        fstype: &str,
-        options: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        if !self.should_update_mtab() {
-            self.verbose_print("Skipping mtab update due to --no-mtab option");
-            return Ok(());
-        }
-
-        self.verbose_print("Updating /etc/mtab");
-        // Here we should implement the logic to update /etc/mtab
-        // Note: In modern systems, this is often not necessary as /etc/mtab is usually a symlink to /proc/self/mounts
-        // But for completeness, we can add a simulated update operation
-        self.verbose_print(&format!(
-            "Would update /etc/mtab with: {} {} {} {}",
-            source, target, fstype, options
-        ));
-        Ok(())
     }
     fn mount_all_filesystems(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.verbose_print("Mounting all filesystems from /etc/fstab");
@@ -842,8 +743,6 @@ impl ConfigHandler {
         target: &str,
         fstype: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        self.verbose_print(&format!("Mount source: {}", source));
-        self.verbose_print(&format!("Mount target: {}", target));
         let mount_source = Some(prepare_mount_source(source).unwrap());
         let flags = MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID;
         let data = None;
@@ -860,12 +759,7 @@ impl ConfigHandler {
             return Ok(());
         }
 
-        if self.is_fake_mode() {
-            self.verbose_print(&format!(
-                "FAKE: Would mount {} on {} with type {}",
-                source, target, fstype
-            ));
-        } else {
+        if !self.is_fake_mode() {
             mount_fs(
                 mount_source.as_ref(),
                 &target.to_string(),
@@ -874,14 +768,12 @@ impl ConfigHandler {
                 data,
                 interal_only,
             )?;
-            self.verbose_print(&format!("Mount successful: {} on {}", source, target));
-            self.update_mtab(&mount_source.unwrap(), target, fstype, "")?;
         }
 
+        self.verbose_print(&format!("{} mounted on {}.", source, target));
         Ok(())
     }
     fn use_alternative_fstab(&self, fstab: &OsString) -> Result<(), Box<dyn std::error::Error>> {
-        self.verbose_print(&format!("Using alternative fstab: {:?}", fstab));
         let fstab_path = fstab.to_str().ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -917,8 +809,17 @@ impl ConfigHandler {
         }
     }
     fn perform_normal_mount(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.verbose_print("Performing normal mount");
         // Implement the logic of a normal mount
+        if self.config.source.is_none() {
+            if self.config.target.is_none() && !self.config.all {
+                self.print_all()?;
+                return Ok(());
+            }
+            return Err(Box::new(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "bad usage",
+            )));
+        }
         let mount_source = match &self.config.source {
             Some(Source::Device(dev)) => dev
                 .to_str()
@@ -938,14 +839,8 @@ impl ConfigHandler {
                 let dev = find_device_by_uuid(uuid_str)?;
                 dev
             }
-            None => {
-                return Err(Box::new(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "No source specified",
-                )))
-            }
+            None => String::default(),
         };
-        self.verbose_print(&format!("Mount source: {}", mount_source));
         let target = &self
             .config
             .target
@@ -954,10 +849,7 @@ impl ConfigHandler {
             .to_str()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid target path!"))
             .unwrap();
-        self.verbose_print(&format!("Mount target: {}", target));
         let (flags, options) = self.parse_options()?;
-        self.verbose_print(&format!("Mount flags: {:?}", flags));
-        self.verbose_print(&format!("Mount options: {:?}", options));
         let fstype = if let Some(t) = self.config.options.types.as_ref().and_then(|t| t.to_str()) {
             Some(t.to_string())
         } else {
@@ -1000,8 +892,7 @@ impl ConfigHandler {
                               source, target, fstype, flags, options);
                     e
                 })?;
-                self.update_mtab(&source, target, fstype.unwrap().as_str(), "")?;
-                self.verbose_print("Mount operation completed");
+                self.verbose_print(&format!("{} mounted on {}.", source, target));
             } else {
                 println!("Already mounted!");
             }
@@ -1329,6 +1220,62 @@ impl ConfigHandler {
             ));
         }
 
+        Ok(())
+    }
+    fn print_all(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let file = File::open("/etc/mtab")?;
+        let reader = BufReader::new(file);
+        for lineres in reader.lines() {
+            if let Ok(line) = lineres {
+                let mut ls = line.split(' ');
+                let mut src = ls.next().unwrap_or_default().to_string();
+                let targ = ls.next().unwrap_or_default();
+                let types = ls.next();
+                let optstr = ls.next();
+                if types.is_some()
+                    && self.config.options.types.is_some()
+                    && types.as_deref().unwrap().to_ascii_lowercase()
+                        != self
+                            .config
+                            .options
+                            .types
+                            .as_deref()
+                            .unwrap()
+                            .to_ascii_lowercase()
+                            .to_string_lossy()
+                {
+                    continue;
+                }
+                if src.starts_with("/dev/loop") {
+                    let loopname = src.rsplit_once('/').unwrap().1;
+                    if loopname.starts_with("loop") {
+                        if let Ok(mut file) =
+                            File::open(format!("/sys/block/{}/loop/autoclear", loopname))
+                        {
+                            let mut buf = [0 as u8; 1];
+                            file.read(&mut buf).ok();
+                            if buf[0] == '1' as u8 {
+                                let mut file = File::open(format!(
+                                    "/sys/block/{}/loop/backing_file",
+                                    loopname
+                                ))?;
+                                src = String::default();
+                                file.read_to_string(&mut src).ok();
+                                src.pop();
+                            }
+                        }
+                    }
+                }
+                print!("{} on {}", src, targ);
+                if let Some(typev) = types {
+                    print!(" type {}", typev);
+                }
+                if let Some(optstrv) = optstr {
+                    print!(" ({})", optstrv);
+                }
+                print!("\n");
+            }
+        }
         Ok(())
     }
 }

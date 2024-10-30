@@ -4,6 +4,7 @@
 //
 // For the full copyright and license information, please view the LICENSE file
 // that was distributed with this source code.
+
 use crate::mount_common::{mount_app, parse_mount_cmd_args, Config, ConfigHandler};
 use clap::Command;
 use uucore::error::{UResult, USimpleError};

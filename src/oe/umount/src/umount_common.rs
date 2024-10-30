@@ -1,3 +1,10 @@
+//! This file is part of the easybox package.
+//
+// (c) Zhenghang <2113130664@qq.com>
+//
+// For the full copyright and license information, please view the LICENSE file
+// that was distributed with this source code.
+
 use clap::{crate_version, Arg, Command};
 use nix::mount::{MntFlags, MsFlags};
 use nix::sched::{setns, CloneFlags};
@@ -472,7 +479,7 @@ impl UmountHandler {
 
     fn verbose_print(&self, message: &str) {
         if self.config.verbose && !self.config.quiet {
-            println!("Verbose: {}", message);
+            println!("umount: {}", message);
         }
     }
 
